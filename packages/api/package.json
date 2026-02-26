@@ -1,0 +1,37 @@
+{
+  "name": "@transaction-auth-engine/api",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "start": "node dist/app.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^9.4.0",
+    "@fastify/jwt": "^7.2.4",
+    "@fastify/static": "^6.12.0",
+    "@fastify/swagger": "^8.14.0",
+    "@fastify/swagger-ui": "^3.0.0",
+    "@fastify/websocket": "^10.0.1",
+    "@transaction-auth-engine/core": "*",
+    "@transaction-auth-engine/shared": "*",
+    "bcryptjs": "^2.4.3",
+    "ccxt": "^4.4.79",
+    "fastify": "^4.25.2",
+    "ioredis": "^5.3.2",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.11.3",
+    "prom-client": "^15.1.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/pg": "^8.10.9",
+    "@types/uuid": "^9.0.7",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  }
+}

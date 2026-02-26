@@ -1,0 +1,19 @@
+{
+  "name": "transaction-auth-engine",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @transaction-auth-engine/core && npm run build -w @transaction-auth-engine/shared && npm run build -w web && npm run build -w @transaction-auth-engine/producer && npm run build -w @transaction-auth-engine/consumer && npm run build -w @transaction-auth-engine/notifier && npm run build -w @transaction-auth-engine/api && npm run build -w @transaction-auth-engine/btc-price-producer && npm run build -w @transaction-auth-engine/stock-price-producer && npm run build -w @transaction-auth-engine/b3-connector && npm run build -w @transaction-auth-engine/opportunity-detector && npm run build -w @transaction-auth-engine/opportunity-justifier && npm run build -w @transaction-auth-engine/shadow-mirror",
+    "build:all": "npm run build --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "qa:fix-wrapper": "docker compose -f .\\docker-compose.yml exec -T fix-wrapper-cpp /bin/bash -lc \"/app/scripts/check-fix-engine.sh\"",
+    "qa:fix-wrapper:chaos": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\qa-fix-wrapper-chaos.ps1",
+    "dev:fix:logs": "docker compose -f .\\docker-compose.yml logs -f fix-wrapper-cpp"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

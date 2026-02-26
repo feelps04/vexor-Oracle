@@ -1,0 +1,1 @@
+{"version":3,"file":"validate-bank.d.ts","sourceRoot":"","sources":["../../src/services/validate-bank.ts"],"names":[],"mappings":"AAIA,MAAM,WAAW,QAAQ;IACvB,IAAI,EAAE,MAAM,CAAC;IACb,IAAI,EAAE,MAAM,CAAC;IACb,IAAI,EAAE,MAAM,CAAC;IACb,QAAQ,CAAC,EAAE,MAAM,CAAC;CACnB;AAED,wBAAsB,gBAAgB,CAAC,QAAQ,EAAE,MAAM,GAAG,OAAO,CAAC,QAAQ,CAAC,CAY1E"}

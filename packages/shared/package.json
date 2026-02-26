@@ -1,0 +1,23 @@
+{
+  "name": "@transaction-auth-engine/shared",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "pino": "^8.17.2",
+    "pino-pretty": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "@transaction-auth-engine/core": "*"
+  }
+}

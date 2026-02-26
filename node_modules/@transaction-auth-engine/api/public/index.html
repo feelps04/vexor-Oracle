@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Terminal de Operações Bancárias</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>Terminal de Operações Bancárias</h1>
+      <p class="subtitle">Distributed Settlement Engine — Multi-Currency & Bank Validation</p>
+    </header>
+
+    <main>
+      <section class="dashboard-grid">
+        <div class="dashboard-stack">
+          <section class="panel form-section">
+            <h2 class="section-title">Conta (Cadastro / Login)</h2>
+            <div class="form-panel">
+              <div class="form-grid">
+                <label for="auth-email">Email</label>
+                <input id="auth-email" type="email" placeholder="voce@exemplo.com" />
+
+                <label for="auth-password">Senha</label>
+                <input id="auth-password" type="password" placeholder="mínimo 6 caracteres" />
+
+                <label>Sessão</label>
+                <div id="auth-status" class="pos-display" style="height:auto; padding:10px;">Deslogado</div>
+
+                <label>Account ID</label>
+                <div id="auth-accountId" class="pos-display" style="height:auto; padding:10px;">—</div>
+              </div>
+              <div style="display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
+                <button type="button" id="btn-auth-register" class="btn btn-primary" style="flex: 1; min-width: 180px;">Cadastrar</button>
+                <button type="button" id="btn-auth-login" class="btn btn-secondary" style="flex: 1; min-width: 180px;">Entrar</button>
+                <button type="button" id="btn-auth-logout" class="btn btn-secondary" style="flex: 1; min-width: 180px;">Sair</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="dashboard-stack">
+          <section class="panel">
+            <h2 class="section-title">Bolsa (Ações disponíveis)</h2>
+            <div class="form-panel">
+              <div class="form-grid">
+                <label for="stocks-symbol">Ativo</label>
+                <select id="stocks-symbol" class="pos-select"></select>
+
+                <label for="stocks-range">Período</label>
+                <select id="stocks-range" class="pos-select">
+                  <option value="1d" selected>1d</option>
+                  <option value="5d">5d</option>
+                  <option value="1mo">1mo</option>
+                  <option value="3mo">3mo</option>
+                  <option value="6mo">6mo</option>
+                  <option value="1y">1y</option>
+                  <option value="2y">2y</option>
+                  <option value="5y">5y</option>
+                </select>
+
+                <label for="stocks-interval">Intervalo</label>
+                <select id="stocks-interval" class="pos-select">
+                  <option value="1m" selected>1m</option>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                  <option value="1h">1h</option>
+                  <option value="1d">1d</option>
+                  <option value="1wk">1wk</option>
+                  <option value="1mo">1mo</option>
+                </select>
+              </div>
+              <button type="button" id="btn-stocks-refresh" class="btn btn-secondary">Atualizar gráfico</button>
+              <div id="stocks-chart" style="height: 420px; margin-top: 16px;"></div>
+            </div>
+          </section>
+
+          <section class="panel form-section">
+            <h2 class="section-title section-title--orange">Comprar Ação</h2>
+            <form id="stock-form" class="form-panel">
+              <div class="form-grid">
+                <label for="stock-accountId">Conta (Account ID)</label>
+                <input id="stock-accountId" name="accountId" type="text" value="acc-1" required placeholder="acc-1" />
+
+                <label for="stock-symbol">Ativo (ex: PETR4, VALE3)</label>
+                <input id="stock-symbol" name="symbol" type="text" value="PETR4" required placeholder="PETR4" />
+
+                <label for="stock-quantity">Quantidade</label>
+                <input id="stock-quantity" name="quantity" type="number" min="1" value="10" required />
+
+                <label for="stock-idempotencyKey">Idempotency Key</label>
+                <input id="stock-idempotencyKey" name="idempotencyKey" type="text" placeholder="Auto" />
+              </div>
+              <button type="submit" id="btn-stock-submit" class="btn btn-primary">Comprar Ação</button>
+            </form>
+          </section>
+        </div>
+
+        <div class="dashboard-stack">
+          <section class="panel">
+            <h2 class="section-title">Bitcoin (BTC/BRL)</h2>
+            <div class="form-panel">
+              <div class="form-grid">
+                <label for="btc-range">Período</label>
+                <select id="btc-range" class="pos-select">
+                  <option value="1h" selected>1h</option>
+                  <option value="6h">6h</option>
+                  <option value="1d">1d</option>
+                </select>
+
+                <label for="btc-interval">Intervalo</label>
+                <select id="btc-interval" class="pos-select">
+                  <option value="1m" selected>1m</option>
+                  <option value="15m">15m</option>
+                </select>
+              </div>
+              <button type="button" id="btn-btc-refresh" class="btn btn-secondary">Atualizar gráfico</button>
+              <div id="btc-chart" style="height: 420px; margin-top: 16px;"></div>
+            </div>
+          </section>
+
+          <section class="panel form-section">
+            <h2 class="section-title section-title--orange">Comprar BTC</h2>
+            <form id="btc-form" class="form-panel">
+              <div class="form-grid">
+                <label for="btc-accountId">Conta (Account ID)</label>
+                <input id="btc-accountId" name="accountId" type="text" value="acc-1" required placeholder="acc-1" />
+
+                <label for="btc-amount">Quantidade BTC (ex: 0.001)</label>
+                <input id="btc-amount" name="amountBtc" type="number" step="0.00000001" min="0.00000001" value="0.001" required />
+
+                <label>Preço atual BTC/BRL</label>
+                <div id="btc-quote" class="pos-display" style="height:auto; padding:10px;">—</div>
+
+                <label>Total estimado (BRL)</label>
+                <div id="btc-total" class="pos-display" style="height:auto; padding:10px;">—</div>
+
+                <label for="btc-idempotencyKey">Idempotency Key</label>
+                <input id="btc-idempotencyKey" name="idempotencyKey" type="text" placeholder="Auto" />
+              </div>
+              <button type="submit" id="btn-btc-submit" class="btn btn-primary">Comprar BTC</button>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="dashboard-stack">
+          <section class="panel form-section">
+            <h2 class="section-title">Transação internacional</h2>
+            <form id="tx-form" class="form-panel">
+              <div class="form-grid">
+                <label for="accountId">Conta (Account ID)</label>
+                <input id="accountId" name="accountId" type="text" value="acc-1" required placeholder="acc-1" />
+
+                <label for="amount">Valor (minor units)</label>
+                <input id="amount" name="amount" type="number" min="1" value="10000" required />
+
+                <label for="currency">Moeda</label>
+                <select id="currency" name="currency">
+                  <option value="BRL">BRL</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                </select>
+
+                <label for="targetBankCode">Banco destino (ex: 033)</label>
+                <input id="targetBankCode" name="targetBankCode" type="text" placeholder="033" />
+
+                <label for="merchantId">Merchant ID</label>
+                <input id="merchantId" name="merchantId" type="text" value="merchant-1" required />
+
+                <label for="idempotencyKey">Idempotency Key</label>
+                <input id="idempotencyKey" name="idempotencyKey" type="text" placeholder="Auto" />
+              </div>
+              <button type="submit" id="btn-submit" class="btn btn-primary">Enviar liquidação</button>
+            </form>
+
+            <div class="form-panel" style="margin-top: 16px;">
+              <p id="fx-pair" class="subtitle" style="margin: 0 0 12px 0;">—</p>
+              <div class="form-grid">
+                <label for="fx-range">Período (câmbio)</label>
+                <select id="fx-range" class="pos-select">
+                  <option value="1h">1h</option>
+                  <option value="6h">6h</option>
+                  <option value="1d">1d</option>
+                  <option value="5d">5d</option>
+                  <option value="7d" selected>7d</option>
+                  <option value="1mo">1mo</option>
+                  <option value="3mo">3mo</option>
+                  <option value="6mo">6mo</option>
+                  <option value="1y">1y</option>
+                  <option value="2y">2y</option>
+                  <option value="5y">5y</option>
+                </select>
+
+                <label for="fx-interval">Intervalo</label>
+                <select id="fx-interval" class="pos-select">
+                  <option value="1m">1m</option>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                  <option value="1h">1h</option>
+                  <option value="1d" selected>1d</option>
+                </select>
+              </div>
+              <button type="button" id="btn-fx-refresh" class="btn btn-secondary">Atualizar gráfico</button>
+              <div id="fx-chart" style="height: 260px; margin-top: 16px;"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="dashboard-stack">
+          <section class="panel form-section pos-section">
+            <h2 class="section-title section-title--orange">Maquininha POS (Simulador)</h2>
+            <div class="pos-machine" id="pos-machine">
+              <div class="pos-screen">
+                <div class="pos-display" id="pos-display">—</div>
+                <div class="pos-status" id="pos-status">Aguardando</div>
+                <div class="pos-steps" id="pos-steps" aria-hidden="true"></div>
+                <div class="pos-qr-wrap" id="pos-qr-wrap" aria-hidden="true">
+                  <canvas id="pos-qr-canvas"></canvas>
+                  <p class="pos-qr-label">Escaneie para abrir o comprovante</p>
+                </div>
+              </div>
+              <div class="pos-keypad">
+                <input type="text" id="pos-amount" class="pos-input" placeholder="Valor" value="100.00" />
+                <select id="pos-currency" class="pos-select">
+                  <option value="BRL">BRL</option>
+                  <option value="USD">USD</option>
+                  <option value="BTC">BTC</option>
+                </select>
+                <button type="button" id="pos-btn-pay" class="btn btn-primary pos-btn-pay">Pagar</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="dashboard-stack">
+          <section class="panel form-section">
+            <h2 class="section-title" style="color: #22c55e;">Gerenciar Saldo</h2>
+            <div class="form-panel">
+              <div class="form-grid">
+                <label for="balance-accountId">Conta</label>
+                <input id="balance-accountId" type="text" value="acc-1" />
+
+                <label>Saldo Atual</label>
+                <div id="current-balance" style="padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; font-size: 1.2em; font-weight: bold;">R$ —</div>
+
+                <label for="balance-amount">Valor (BRL)</label>
+                <input id="balance-amount" type="number" min="1" value="1000" />
+              </div>
+              <div style="display: flex; gap: 12px; margin-top: 16px;">
+                <button type="button" id="btn-deposit" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #22c55e, #16a34a);">Depositar (+)</button>
+                <button type="button" id="btn-withdraw" class="btn btn-primary" style="flex: 1; background: linear-gradient(135deg, #ef4444, #dc2626);">Retirar (-)</button>
+              </div>
+              <div id="balance-result" style="margin-top: 12px; padding: 10px; border-radius: 6px; display: none;"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel stepper-panel" id="stepper-panel" aria-hidden="true">
+        <h2>Processamento</h2>
+        <ol class="stepper" id="stepper">
+          <li id="step-awesome" class="step"><span class="step-label">AwesomeAPI (câmbio)</span><span class="step-status"></span></li>
+          <li id="step-brasil" class="step"><span class="step-label">BrasilAPI (banco)</span><span class="step-status"></span></li>
+          <li id="step-kafka" class="step"><span class="step-label">Kafka Producer</span><span class="step-status"></span></li>
+          <li id="step-auth" class="step"><span class="step-label">Auth Engine</span><span class="step-status"></span></li>
+        </ol>
+      </section>
+
+      <section class="panel receipt-panel" id="receipt-panel" aria-hidden="true">
+        <div class="receipt-header">
+          <h2>Comprovante</h2>
+          <button type="button" id="btn-export" class="btn btn-secondary">Exportar comprovante JSON</button>
+        </div>
+        <pre id="receipt-body" class="receipt-body"></pre>
+      </section>
+
+      <section class="panel time-machine-panel">
+        <h2 class="section-title">Financial Time Machine (Event Sourcing)</h2>
+        <p class="time-machine-desc">Arraste o slider para ver o saldo da conta em um momento no tempo.</p>
+        <div class="time-machine-widget">
+          <label for="timemachine-account">Conta</label>
+          <input type="text" id="timemachine-account" value="acc-1" class="pos-input" />
+          <label for="timemachine-slider">Data / Hora</label>
+          <input type="datetime-local" id="timemachine-slider" class="pos-input" />
+          <div class="time-machine-result">
+            <span class="time-machine-label">Saldo no momento:</span>
+            <span class="time-machine-balance" id="timemachine-balance">—</span>
+          </div>
+          <div id="timemachine-chart" style="height: 260px; width: 100%; margin-top: 16px;"></div>
+          <button type="button" id="btn-timemachine-refresh" class="btn btn-secondary">Atualizar</button>
+        </div>
+      </section>
+
+      <section class="panel integrity-panel">
+        <h2 class="section-title">Shadow Data Mirror (Redis vs SQL)</h2>
+        <div class="integrity-widget">
+          <div class="integrity-shield" id="integrity-shield" title="Integridade">
+            <span class="shield-icon" id="shield-icon">&#128737;</span>
+            <span class="integrity-status" id="integrity-status">—</span>
+          </div>
+          <div class="integrity-table-wrap">
+            <table class="integrity-table" id="integrity-table">
+              <thead><tr><th>Conta</th><th>Redis (BRL)</th><th>SQL (BRL)</th><th>Match</th></tr></thead>
+              <tbody id="integrity-tbody"></tbody>
+            </table>
+          </div>
+          <button type="button" id="btn-integrity-refresh" class="btn btn-secondary">Atualizar</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        <span class="health-widget" id="health-widget" title="Saúde do sistema">
+          <span class="health-icon" id="health-icon">—</span>
+          <span class="health-text" id="health-text">Verificando...</span>
+        </span>
+        | API: <code id="api-base">http://localhost:3000</code>
+      </p>
+    </footer>
+  </div>
+  <div class="modal-overlay" id="biometric-modal" aria-hidden="true">
+    <div class="modal modal--biometric">
+      <h3>Face ID / Touch ID (Simulação)</h3>
+      <p>Validação biométrica para autorizar o pagamento.</p>
+      <div class="modal-actions">
+        <button type="button" id="biometric-confirm" class="btn btn-primary">Confirmar com biometria</button>
+        <button type="button" id="biometric-cancel" class="btn btn-secondary">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

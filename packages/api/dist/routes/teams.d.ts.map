@@ -1,0 +1,1 @@
+{"version":3,"file":"teams.d.ts","sourceRoot":"","sources":["../../src/routes/teams.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAC;AAC/C,OAAO,KAAK,KAAK,MAAM,SAAS,CAAC;AAEjC,MAAM,WAAW,SAAS;IACxB,KAAK,EAAE,KAAK,CAAC;CACd;AAMD,wBAAsB,WAAW,CAAC,GAAG,EAAE,eAAe,EAAE,IAAI,EAAE,SAAS,GAAG,OAAO,CAAC,IAAI,CAAC,CAwDtF"}

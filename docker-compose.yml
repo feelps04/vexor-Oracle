@@ -1,0 +1,393 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      zookeeper:
+        condition: service_started
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ZOOKEEPER_SESSION_TIMEOUT_MS: 60000
+      KAFKA_ZOOKEEPER_CONNECTION_TIMEOUT_MS: 60000
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 10s
+      timeout: 60s
+      retries: 12
+      start_period: 120s
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      kafka:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Kafka to be ready..."
+        until kafka-topics --bootstrap-server kafka:9092 --list >/dev/null 2>&1; do
+          sleep 2
+        done
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions.pending --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions.authorized --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions.denied --partitions 6 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic transactions.dlq --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic btc.ticker --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic stocks.ticker --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic fx.ticker --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic market.depth.l2 --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic market.trades --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic market.status --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic opportunities.buy --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic market.ohlc --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic market.anomalies --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic market.stress --partitions 1 --replication-factor 1
+        echo "Topics created"
+        exit 0
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: settlement
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/api/dist/app.js"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      KAFKA_BROKERS: kafka:9092
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/settlement
+      MARKET_GROUPS_FILE: /app/grupo.txt
+      MARKET_DATA_URL: http://host.docker.internal:8000
+      B3_FUTURES_CURRENT_CONTRACTS: '{"WIN":"WINJ26","WDO":"WDOH26","IND":"INDJ26","DOL":"DOLH26"}'
+      B3_EXTRA_SYMBOLS: PETR4,VALE3,ITUB4,BBDC4,ABEV3,BBAS3,SANB11,RENT3,LREN3,MGLU3,WEGE3,SUZB3,JBSS3,RAIZ4,RDOR3,WIN$,WDO$,IND$,DOL$,IFNC,IMAT,ICON,ES,NQ,YM,RTY,DAX,FTSE,NIKKEI,HANGSENG,BZ,CL,GC,DXY,EUR/USD,USD/BRL
+      JWT_SECRET: "rA9bQ7vN1pX4kZ2mT8sH6cL0yE3uW5dG9fJ2nP7qR4tV8xB1aD6hK3mS0uZ5cN2p"
+      COOKIE_SECURE: "false"
+      BRAPI_TOKEN: "q4wMUMs7opV8hM4oM6FTyK"
+      TWELVE_DATA_API_KEY: ${TWELVE_DATA_API_KEY}
+    volumes:
+      - ./grupo.txt:/app/grupo.txt:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
+
+  market-data:
+    profiles: ["yfinance"]
+    build:
+      context: ./services/market-data
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/producer/dist/index.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      TRANSACTIONS_PER_SECOND: "1000"
+
+  btc-price-producer:
+    profiles: ["simulated"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/btc-price-producer/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC: stocks.ticker
+
+  b3-connector:
+    build:
+      context: .
+      dockerfile: ./packages/b3-connector/Dockerfile
+    container_name: b3-connector
+    restart: always
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - B3_SYMBOLS=
+      - B3_CHANNELS=233.252.14.1:20051,233.252.14.3:20053,233.252.14.12:20062
+      - B3_SPIKE_MULTIPLIER=5
+      - B3_KAFKA_TOPIC_STOCKS_TICKER=stocks.ticker
+      - B3_KAFKA_TOPIC_OPPORTUNITIES=opportunities.buy
+    depends_on:
+      - kafka
+    ports:
+      - "20051:20051/udp"
+      - "20053:20053/udp"
+      - "20062:20062/udp"
+
+  fix-wrapper-cpp:
+    build:
+      context: ./packages/fix-wrapper-cpp
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "9109:9109"
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      FIX_WRAPPER_KAFKA_TOPIC: stocks.ticker
+      FIX_WRAPPER_SYSTEM_TOPIC: system.events
+      FIX_WRAPPER_SIM_SYMBOL: PETR4
+      FIX_WRAPPER_BUFFER_BYTES: "524288000"
+      FIX_WRAPPER_METRICS_PORT: "9109"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      LD_LIBRARY_PATH: /opt/onixs/lib:/usr/local/lib
+    volumes:
+      - "C:/Users/Bete/Desktop/templates/OnixS.FixEngineCpp-Ubuntu2404-gcc142-cpp23-4.13.0.tar.xz:/tmp/onixs-sdk.tar.xz:ro"
+
+  stock-price-producer:
+    profiles: ["mmf"]
+    build:
+      context: ./services/stock-price-producer
+      dockerfile: Dockerfile
+    container_name: stock-price-producer
+    ipc: host
+    restart: always
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      MT5_SHARED_MEMORY_NAME: B3RAM
+      MT5_RECORD_BYTES: "128"
+      MT5_RECORD_COUNT: "500"
+      MT5_POLL_MS: "50"
+      MT5_BID_OFFSET_BYTES: "0"
+      MT5_ASK_OFFSET_BYTES: "8"
+      MT5_VOLUME_OFFSET_BYTES: "16"
+      MT5_TIME_OFFSET_BYTES: "24"
+      MT5_HEARTBEAT_OFFSET_BYTES: "36"
+      MT5_WRITING_FLAG_OFFSET_BYTES: "40"
+      MT5_SYMBOL_OFFSET_BYTES: "44"
+      MT5_SYMBOL_BYTES: "16"
+      MT5_GROUP_OFFSET_BYTES: "60"
+      MT5_GROUP_BYTES: "64"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_TICKS: stocks.ticker
+      KAFKA_TOPIC_DEPTH_L2: market.depth.l2
+
+  fx-price-producer:
+    profiles: ["simulated"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/fx-price-producer/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:9092
+
+  opportunity-detector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/opportunity-detector/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:9092
+
+  opportunity-justifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/opportunity-justifier/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      # OPENAI_API_KEY: optional for LLM justification
+
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/consumer/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      REDIS_URL: redis://redis:6379
+    deploy:
+      replicas: 1
+
+  notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/notifier/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      WEBHOOK_BASE_URL: "http://host.docker.internal:9999/webhook"
+
+  shadow-mirror:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "packages/shadow-mirror/dist/main.js"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/settlement
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - "./prometheus.yml:/etc/prometheus/prometheus.yml"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14268:14268"   # Jaeger thrift HTTP
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - "./grafana/provisioning:/etc/grafana/provisioning"
+      - "./grafana/dashboards:/var/lib/grafana/dashboards"
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+  flink-jobmanager:
+    image: flink:1.18-java11
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+
+  flink-taskmanager:
+    image: flink:1.18-java11
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+    deploy:
+      replicas: 1
+
+  flink-job-submit:
+    build:
+      context: ./services/flink-jobs
+      dockerfile: Dockerfile
+    depends_on:
+      - flink-jobmanager
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FLINK_JOBMANAGER: flink-jobmanager:8081
+    restart: "no"
+
+volumes:
+  redis-data:

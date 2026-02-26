@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "nVjzmTBMiVQ=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Bete\\transaction-auth-engine\\packages\\b3-bridge-dotnet\\b3-bridge-dotnet.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Bete\\.nuget\\packages\\confluent.kafka\\2.4.0\\confluent.kafka.2.4.0.nupkg.sha512",
+    "C:\\Users\\Bete\\.nuget\\packages\\librdkafka.redist\\2.4.0\\librdkafka.redist.2.4.0.nupkg.sha512",
+    "C:\\Users\\Bete\\.nuget\\packages\\system.memory\\4.5.0\\system.memory.4.5.0.nupkg.sha512"
+  ],
+  "logs": []
+}
