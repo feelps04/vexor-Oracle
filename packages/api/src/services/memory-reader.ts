@@ -1,9 +1,12 @@
 // Memory Reader Service - Lê dados do MMF (Memory Mapped File) do MT5
 // Integração com OCI GenAI para análise em tempo real
+// Trading Wisdom - Regras de Cadeado de Ferro e Independência Estatística
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import fetch from 'node-fetch';
+// Node.js 18+ tem fetch nativo
+const fetch = globalThis.fetch;
+import { TRADING_WISDOM, shouldTrade, generateAIWisdom } from './trading-wisdom.js';
 
 const execAsync = promisify(exec);
 
@@ -120,28 +123,79 @@ export async function analyzeWithGenAI(ticks: MarketTick[]): Promise<string> {
   }
 }
 
-// Constrói prompt para análise
-function buildAnalysisPrompt(ticks: MarketTick[]): string {
+// Constrói prompt para análise com Trading Wisdom
+function buildAnalysisPrompt(ticks: MarketTick[], traderContext?: {
+  todayPnL?: number;
+  consecutiveLosses?: number;
+  emotionalState?: string;
+}): string {
   const tickData = ticks.map(t => 
     `${t.symbol}: Bid=${t.bid.toFixed(2)}, Ask=${t.ask.toFixed(2)}, Vol=${t.volume}`
   ).join('\n');
 
-  return `<s>[INST] Você é um analista de mercado financeiro especialista. Analise os seguintes dados de mercado em tempo real e forneça insights breves:
+  // Incluir conhecimento de Trading Wisdom no prompt
+  const wisdomContext = `
+CONHECIMENTO DE TRADING (Mark Douglas):
 
+${TRADING_WISDOM.statisticalIndependence.corePrinciple}
+
+REGRAS DE CADEADO DE FERRO:
+${TRADING_WISDOM.cadeadoDeFerro.rules.map(r => `- ${r.name}: ${r.description}`).join('\n')}
+
+SINAIS DE ALERTA - QUANDO DIZER "NÃO OPERE":
+${TRADING_WISDOM.alertSignals.doNotTrade.map(s => `- ${s}`).join('\n')}
+`;
+
+  let contextInfo = '';
+  if (traderContext) {
+    contextInfo = `
+CONTEXTO DO TRADER:
+- PnL hoje: ${traderContext.todayPnL || 0}
+- Perdas consecutivas: ${traderContext.consecutiveLosses || 0}
+- Estado emocional: ${traderContext.emotionalState || 'neutro'}
+`;
+  }
+
+  return `<s>[INST] Você é um analista de mercado financeiro especialista com conhecimento profundo de psicologia de trading (Mark Douglas - Trading in the Zone / O Trader Disciplinado).
+
+${wisdomContext}
+
+${contextInfo}
+
+DADOS DE MERCADO EM TEMPO REAL:
 ${tickData}
 
 Forneça:
-1. Tendência geral do mercado
-2. Ativos com maior movimento
-3. Recomendação rápida de ação
+1. Análise técnica breve do mercado
+2. Se o contexto do trader indicar problema emocional, diga "NÃO OPERE" e explique por quê
+3. Lembre o trader sobre independência estatística se ele estiver tentando recuperar perdas
+4. Recomendação de ação baseada no Cadeado de Ferro
 
-Seja conciso e objetivo. Responda em português. [/INST]`;
+Seja conciso e objetivo. Responda em português. Priorize a proteção psicológica do trader. [/INST]`;
 }
 
 // Análise fallback quando OCI GenAI não está disponível
-function fallbackAnalysis(ticks: MarketTick[]): string {
+function fallbackAnalysis(ticks: MarketTick[], traderContext?: {
+  todayPnL?: number;
+  consecutiveLosses?: number;
+  emotionalState?: string;
+}): string {
   const avgPrice = ticks.reduce((sum, t) => sum + t.last, 0) / ticks.length;
   const highVolume = ticks.filter(t => t.volume > 5000);
+  
+  // Incluir sabedoria de trading
+  let wisdomMessage = '';
+  if (traderContext?.consecutiveLosses && traderContext.consecutiveLosses >= 3) {
+    wisdomMessage = `
+
+⚠️ AVISO DE TRADING:
+${generateAIWisdom({ situation: 'post_loss', consecutiveLosses: traderContext.consecutiveLosses })}`;
+  } else if (traderContext?.emotionalState === 'revenge') {
+    wisdomMessage = `
+
+🛑 ALERTA CRÍTICO:
+${generateAIWisdom({ situation: 'revenge_attempt' })}`;
+  }
   
   return `📊 Análise de Mercado (Local)
   
@@ -149,7 +203,9 @@ function fallbackAnalysis(ticks: MarketTick[]): string {
 🔥 Maior volume: ${highVolume.map(t => t.symbol).join(', ') || 'Nenhum destaque'}
 ⏰ Última atualização: ${new Date().toLocaleTimeString('pt-BR')}
 
-💡 Recomendação: Monitore os ativos com alto volume para oportunidades de trading.`;
+💡 Recomendação: Monitore os ativos com alto volume para oportunidades de trading.
+
+📝 Lembrete: Cada trade é estatisticamente independente. O mercado não deve nada a você.${wisdomMessage}`;
 }
 
 // Inicia o serviço de leitura contínua
@@ -177,9 +233,15 @@ export function getCurrentMemoryData(): MarketDataBuffer {
   return { ...sharedMemory };
 }
 
+// Exporta função de verificação de trading
+export { shouldTrade, generateAIWisdom, TRADING_WISDOM };
+
 export default {
   readMemoryMappedFile,
   analyzeWithGenAI,
   startMemoryReader,
-  getCurrentMemoryData
+  getCurrentMemoryData,
+  shouldTrade,
+  generateAIWisdom,
+  TRADING_WISDOM
 };

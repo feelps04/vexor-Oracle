@@ -9,7 +9,17 @@ import pg from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { readMemoryMappedFile, analyzeWithGenAI, startMemoryReader } from './services/memory-reader.js';
+import { readMemoryMappedFile, analyzeWithGenAI, startMemoryReader, shouldTrade, generateAIWisdom, TRADING_WISDOM } from './services/memory-reader.js';
+import { initializeOracleMemory, getTradingWisdomFromOracle, saveToOracle, getFromOracle } from './services/oracle-memory.js';
+import { 
+  saveAIDecisionLog, 
+  saveTradeToATP, 
+  saveTickToNoSQL, 
+  analyzeWithMarkDouglas,
+  AIDecisionLog,
+  TradeHistory,
+  MarketTickNoSQL
+} from './services/oci-databases.js';
 
 dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,47 +103,6 @@ app.get('/api/v1/memory/summary', async () => {
   return { success: true, summary: Object.values(summary) };
 });
 
-// ==================== SOCIAL ROUTES (PostgreSQL) ====================
-
-app.get('/api/v1/social/feed', async () => {
-  try {
-    const result = await pool.query(`
-      SELECT p.*, u.username, u.name as user_name, u.avatar as user_avatar
-      FROM social_posts p
-      LEFT JOIN users u ON p.user_id = u.id
-      ORDER BY p.created_at DESC
-      LIMIT 20
-    `);
-    return { posts: result.rows };
-  } catch {
-    return { posts: [] };
-  }
-});
-
-app.get('/api/v1/social/stories', async () => {
-  try {
-    const result = await pool.query(`
-      SELECT s.*, u.username, u.name as user_name
-      FROM social_stories s
-      LEFT JOIN users u ON s.user_id = u.id
-      WHERE s.expires_at > NOW()
-      ORDER BY s.created_at DESC
-    `);
-    return { stories: result.rows };
-  } catch {
-    return { stories: [] };
-  }
-});
-
-app.get('/api/v1/social/me', async () => ({
-  user: {
-    id: 1,
-    username: 'vexor_user',
-    name: 'VEXOR Trader',
-    avatar: null
-  }
-}));
-
 // ==================== MARKET DATA ROUTES ====================
 
 // Salvar tick no banco
@@ -203,6 +172,82 @@ app.get('/api/v1/ai/history', async () => {
   }
 });
 
+// ==================== TRADING WISDOM ROUTES (Oracle Cloud) ====================
+
+// Verificar se pode operar
+app.post('/api/v1/trading/can-trade', async (request) => {
+  const traderState = request.body as any;
+  const result = shouldTrade(traderState);
+  return result;
+});
+
+// Obter sabedoria de trading da Oracle Cloud
+app.get('/api/v1/trading/wisdom', async () => {
+  const wisdom = await getTradingWisdomFromOracle();
+  return wisdom;
+});
+
+// Gerar mensagem de sabedoria baseada no contexto
+app.post('/api/v1/trading/wisdom/generate', async (request) => {
+  const context = request.body as any;
+  const wisdom = generateAIWisdom(context);
+  return { wisdom };
+});
+
+// Regras de Cadeado de Ferro
+app.get('/api/v1/trading/iron-lock-rules', async () => {
+  const wisdom = await getTradingWisdomFromOracle();
+  return {
+    rules: wisdom.cadeadoDeFerro?.rules || TRADING_WISDOM.cadeadoDeFerro.rules,
+    definition: wisdom.cadeadoDeFerro?.definition || TRADING_WISDOM.cadeadoDeFerro.definition,
+    enforcement: TRADING_WISDOM.cadeadoDeFerro.enforcement
+  };
+});
+
+// Salvar memória do trader na Oracle
+app.post('/api/v1/trading/memory/save', async (request) => {
+  const { key, data } = request.body as any;
+  const success = await saveToOracle(key, data);
+  return { success, stored: success ? 'oracle-cloud' : 'local-fallback' };
+});
+
+// Recuperar memória do trader da Oracle
+app.get('/api/v1/trading/memory/get/:key', async (request) => {
+  const { key } = request.params as any;
+  const data = await getFromOracle(key);
+  return { success: !!data, data };
+});
+
+// ==================== OCI DATABASES ROUTES ====================
+
+// Salvar log de decisão da IA (Autonomous JSON)
+app.post('/api/v1/oci/ai-log', async (request) => {
+  const log = request.body as AIDecisionLog;
+  const success = await saveAIDecisionLog(log);
+  return { success, storage: 'autonomous-json' };
+});
+
+// Salvar trade no ATP
+app.post('/api/v1/oci/trade', async (request) => {
+  const trade = request.body as TradeHistory;
+  const success = await saveTradeToATP(trade);
+  return { success, storage: 'atp' };
+});
+
+// Salvar tick no NoSQL
+app.post('/api/v1/oci/tick', async (request) => {
+  const tick = request.body as MarketTickNoSQL;
+  const success = await saveTickToNoSQL(tick);
+  return { success, storage: 'nosql' };
+});
+
+// Análise com Mark Douglas Wisdom
+app.post('/api/v1/oci/analyze-mark-douglas', async (request) => {
+  const { marketData, traderState } = request.body as any;
+  const result = await analyzeWithMarkDouglas(marketData, traderState);
+  return result;
+});
+
 // ==================== STATIC FILES ====================
 
 await app.register(staticPlugin, {
@@ -218,6 +263,10 @@ app.setNotFoundHandler(async (request, reply) => {
 
 const start = async () => {
   try {
+    // Inicializa memória Oracle Cloud
+    await initializeOracleMemory();
+    console.log('🔮 Oracle Cloud Memory inicializada');
+    
     // Inicia leitor de memória em background
     startMemoryReader(1000);
     console.log('🔍 Memory Reader iniciado');
@@ -227,6 +276,7 @@ const start = async () => {
     console.log(`🚀 VEXOR API rodando na porta ${port}`);
     console.log('📊 PostgreSQL conectado');
     console.log('🤖 OCI GenAI pronto');
+    console.log('💾 Trading Wisdom na Oracle Cloud');
   } catch (err) {
     app.log.error(err);
     process.exit(1);

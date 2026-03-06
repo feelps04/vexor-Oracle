@@ -28,6 +28,7 @@
     "@geckos.io/server": "^3.0.2",
     "axios": "^1.13.6",
     "express": "^5.2.1",
+    "pdf-parse": "^1.1.1",
     "ws": "^8.19.0"
   }
 }
