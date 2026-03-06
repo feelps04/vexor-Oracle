@@ -1,0 +1,14 @@
+{
+  "name": "@transaction-auth-engine/stock-price-producer",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "ffi-napi": "^4.0.3",
+    "ref-napi": "^3.0.3"
+  }
+}

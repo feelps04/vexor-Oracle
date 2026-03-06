@@ -3,11 +3,12 @@ import Redis from 'ioredis';
 import { Pool } from 'pg';
 import path from 'path';
 import type { FastifyInstance } from 'fastify';
-import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCookie from '@fastify/cookie';
 import fastifyJwt from '@fastify/jwt';
 import dns from 'node:dns';
+import { config } from 'dotenv';
+config({ path: path.resolve(process.cwd(), '.env') }); // Load .env from project root
 import { createLogger } from '@transaction-auth-engine/shared';
 import { ApiKafkaProducer } from './infrastructure/kafka-producer.js';
 import { registerSwagger } from './plugins/swagger.js';
@@ -27,6 +28,8 @@ import { btcWsRoutes } from './routes/btc-ws.js';
 import { fxRoutes } from './routes/fx.js';
 import { teamsRoutes } from './routes/teams.js';
 import { marketGroupsRoutes } from './routes/market-groups.js';
+import { sectorRoutes } from './routes/sectors.js';
+import socialRoutes from './routes/social.js';
 import { MercadoBitcoinClient, BrapiClient } from '@transaction-auth-engine/shared';
 import { registerMetrics, httpRequestsTotal, httpRequestDuration } from './infrastructure/metrics.js';
 import { runMigrations } from './infrastructure/migrations.js';
@@ -85,6 +88,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   const logger = createLogger('api');
   const app = Fastify({ logger: false });
 
+  // CORS support
+  await app.register(import('@fastify/cors'), {
+    origin: ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:3000', 'http://127.0.0.1:3000'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+  });
+
   // Request timing and metrics hook
   app.addHook('onRequest', (request, _reply, done) => {
     (request as unknown as { log: typeof logger; startTime: number }).log = logger.child({
@@ -129,25 +140,35 @@ export async function buildApp(): Promise<FastifyInstance> {
     fs.existsSync(webDistLocal) ? webDistLocal : fs.existsSync(webDistMonorepo) ? webDistMonorepo : fs.existsSync(publicLocal) ? publicLocal : publicMonorepo;
 
   if (fs.existsSync(resolvedPublic)) {
-    await app.register(fastifyStatic, {
-      root: resolvedPublic,
-      prefix: '/',
-      setHeaders: (res, pathname) => {
-        const normalized = String(pathname || '').replace(/\\/g, '/');
-        if (normalized.endsWith('/app.js') || normalized.endsWith('/index.html') || normalized === 'app.js' || normalized === 'index.html') {
-          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-          res.setHeader('Pragma', 'no-cache');
-          res.setHeader('Expires', '0');
-          res.setHeader('Surrogate-Control', 'no-store');
-        }
-      },
-    });
-    app.get('/', (_req, reply) => reply.sendFile('index.html'));
+    const nodeMajor = Number(String(process.versions.node || '0').split('.')[0] || 0);
+    if (nodeMajor >= 22) {
+      logger.warn({ node: process.versions.node }, '@fastify/static disabled on Node >=22; running API without static assets');
+    } else {
+    try {
+      const fastifyStatic = (await import('@fastify/static')).default;
+      await app.register(fastifyStatic, {
+        root: resolvedPublic,
+        prefix: '/',
+        setHeaders: (res, pathname) => {
+          const normalized = String(pathname || '').replace(/\\/g, '/');
+          if (normalized.endsWith('/app.js') || normalized.endsWith('/index.html') || normalized === 'app.js' || normalized === 'index.html') {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            res.setHeader('Surrogate-Control', 'no-store');
+          }
+        },
+      });
+      app.get('/', (_req, reply) => reply.sendFile('index.html'));
 
-    app.get('/login', (_req, reply) => reply.sendFile('index.html'));
-    app.get('/register', (_req, reply) => reply.sendFile('index.html'));
-    app.get('/app', (_req, reply) => reply.sendFile('index.html'));
-    app.get('/app/*', (_req, reply) => reply.sendFile('index.html'));
+      app.get('/login', (_req, reply) => reply.sendFile('index.html'));
+      app.get('/register', (_req, reply) => reply.sendFile('index.html'));
+      app.get('/app', (_req, reply) => reply.sendFile('index.html'));
+      app.get('/app/*', (_req, reply) => reply.sendFile('index.html'));
+    } catch (err) {
+      logger.warn({ err }, '@fastify/static unavailable; running API without static assets');
+    }
+    }
   }
 
   const producer = new ApiKafkaProducer({ brokers: KAFKA_BROKERS });
@@ -159,6 +180,27 @@ export async function buildApp(): Promise<FastifyInstance> {
   let redis: Redis | undefined;
   try {
     redis = new Redis(REDIS_URL);
+    try {
+      redis.on('error', () => {
+        // avoid noisy unhandled error events; routes already handle redis failures
+      });
+    } catch {
+      // ignore
+    }
+
+    const pingTimeoutMs = Number(process.env.REDIS_PING_TIMEOUT_MS ?? 1500);
+    const pingOk = await Promise.race([
+      redis.ping().then(() => true).catch(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), pingTimeoutMs)),
+    ]);
+    if (!pingOk) {
+      try {
+        redis.disconnect();
+      } catch {
+        // ignore
+      }
+      redis = undefined;
+    }
   } catch {
     redis = undefined;
   }
@@ -170,6 +212,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS ?? 5000),
       idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS ?? 30000),
       max: Number(process.env.PG_POOL_MAX ?? 10),
+      ssl: { rejectUnauthorized: false }, // Required for Supabase
     });
 
     const ok = await ensurePgReady(pg, logger);
@@ -185,9 +228,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(fastifyCookie);
   const jwtSecret = process.env.JWT_SECRET;
-  if (pg && !jwtSecret) {
-    throw new Error('JWT_SECRET is required when DATABASE_URL is set');
-  }
+  // JWT_SECRET is optional - we support Supabase JWT (ES256) without it
   if (jwtSecret) {
     await app.register(fastifyJwt, { secret: jwtSecret });
   }
@@ -195,6 +236,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   if (pg) await runMigrations(pg);
 
   await app.register(marketGroupsRoutes);
+  await app.register(sectorRoutes, { redis });
+  await app.register(socialRoutes, { pg });
 
   await app.register(transactionRoutes, { producer, redis });
   await app.register(orderRoutes, { producer, redis, mercadoBitcoin, brapi });
@@ -219,8 +262,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     await app.register(integrityRoutes, { redis, pg });
     await app.register(realtimeRoutes, { redis, pg });
   }
+  // Register auth routes with or without pg (supports Supabase JWT and mock login)
+  await app.register(authRoutes, { pg, redis });
   if (pg) {
-    await app.register(authRoutes, { pg, redis });
     await app.register(chatRoutes, { pg });
     await app.register(newsRoutes, { pg });
     await app.register(balanceAtRoutes, { pg });

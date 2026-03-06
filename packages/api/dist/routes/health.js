@@ -50,4 +50,3 @@ async function healthRoutes(app, opts) {
         });
     });
 }
-//# sourceMappingURL=health.js.map

@@ -22,4 +22,3 @@ function debugLog(payload) {
         // ignore
     }
 }
-//# sourceMappingURL=debug-log.js.map

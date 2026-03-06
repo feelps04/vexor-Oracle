@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import type Redis from 'ioredis';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { verifySupabaseJWT } from '../infrastructure/supabase-jwt.js';
 
 const BALANCE_PREFIX = 'balance:v2:';
 const INITIAL_BALANCE = 0;
@@ -25,7 +26,7 @@ function cookieSecure(): boolean {
 
 export async function authRoutes(
   app: FastifyInstance,
-  opts: { pg: Pool; redis?: Redis }
+  opts: { pg?: Pool; redis?: Redis }
 ): Promise<void> {
   const { pg, redis } = opts;
 
@@ -69,6 +70,26 @@ export async function authRoutes(
     async (request, reply) => {
       const email = String(request.body.email || '').trim().toLowerCase();
       const password = String(request.body.password || '');
+
+      // Mock register when PostgreSQL not available
+      if (!pg) {
+        const mockUserId = 'mock-user-' + crypto.randomBytes(8).toString('hex');
+        const mockAccountId = 'mock-account-' + crypto.randomBytes(8).toString('hex');
+        
+        // Use app.jwt if available, otherwise create a simple mock token
+        let accessToken: string;
+        if (app.jwt && typeof app.jwt.sign === 'function') {
+          accessToken = app.jwt.sign(
+            { email, accountId: mockAccountId },
+            { sub: mockUserId, expiresIn: accessTtlSec }
+          );
+        } else {
+          // Simple mock token for development
+          accessToken = 'mock.' + Buffer.from(JSON.stringify({ sub: mockUserId, email, accountId: mockAccountId, exp: Math.floor(Date.now() / 1000) + accessTtlSec })).toString('base64url') + '.mock';
+        }
+
+        return reply.code(201).send({ userId: mockUserId, accountId: mockAccountId, accessToken });
+      }
 
       const passwordHash = await bcrypt.hash(password, 10);
 
@@ -172,6 +193,26 @@ export async function authRoutes(
     async (request, reply) => {
       const email = String(request.body.email || '').trim().toLowerCase();
       const password = String(request.body.password || '');
+
+      // Mock login when PostgreSQL not available
+      if (!pg) {
+        const mockUserId = 'mock-user-' + crypto.randomBytes(8).toString('hex');
+        const mockAccountId = 'mock-account-' + crypto.randomBytes(8).toString('hex');
+        
+        // Use app.jwt if available, otherwise create a simple mock token
+        let accessToken: string;
+        if (app.jwt && typeof app.jwt.sign === 'function') {
+          accessToken = app.jwt.sign(
+            { email, accountId: mockAccountId },
+            { sub: mockUserId, expiresIn: accessTtlSec }
+          );
+        } else {
+          // Simple mock token for development
+          accessToken = 'mock.' + Buffer.from(JSON.stringify({ sub: mockUserId, email, accountId: mockAccountId, exp: Math.floor(Date.now() / 1000) + accessTtlSec })).toString('base64url') + '.mock';
+        }
+
+        return reply.send({ userId: mockUserId, accountId: mockAccountId, accessToken });
+      }
 
       try {
         const userRes = await pg.query<{ id: string; password_hash: string }>(

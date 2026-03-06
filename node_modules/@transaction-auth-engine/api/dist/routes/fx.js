@@ -4,13 +4,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fxRoutes = fxRoutes;
-const shared_1 = require("@transaction-auth-engine/shared");
 const kafkajs_1 = require("kafkajs");
 const node_dns_1 = __importDefault(require("node:dns"));
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',');
 const TOPIC_FX = 'fx.ticker';
-const AWESOME_LAST_URL = 'https://economia.awesomeapi.com.br/last/';
-const AWESOME_DAILY_URL = 'https://economia.awesomeapi.com.br/json/daily/';
 async function resolveIpv4Host(hostname, timeoutMs = 1000) {
     const host = String(hostname || '').trim();
     if (!host)
@@ -72,31 +69,6 @@ function rangeDays(range) {
         return 1825;
     return 7;
 }
-async function fetchFxDaily(currency, days) {
-    const pair = `${currency}-BRL`;
-    const url = `${AWESOME_DAILY_URL}${pair}/${days}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-        throw new Error(`FX daily fetch failed: ${res.status}`);
-    }
-    const json = (await res.json());
-    return Array.isArray(json) ? json : [];
-}
-async function fetchFxRate(currency) {
-    const url = `${AWESOME_LAST_URL}${currency}-BRL`;
-    const res = await fetch(url);
-    if (!res.ok) {
-        throw new Error(`FX rate fetch failed: ${res.status}`);
-    }
-    const json = (await res.json());
-    const key = `${currency}BRL`;
-    const bid = json?.[key]?.bid;
-    const rate = parseFloat(String(bid));
-    if (!Number.isFinite(rate) || rate <= 0) {
-        throw new Error('FX rate fetch failed: invalid bid');
-    }
-    return rate;
-}
 function buildDailyCandles(items) {
     // AwesomeAPI returns most recent first
     const sorted = items
@@ -121,7 +93,6 @@ function buildDailyCandles(items) {
     return out;
 }
 async function fxRoutes(app, opts) {
-    const yahoo = new shared_1.YahooFinanceClient();
     const marketDataUrl = String(process.env.MARKET_DATA_URL ?? '').trim();
     const redis = opts?.redis;
     const FX_LAST_RATE_KEY_PREFIX = 'market:fx:lastRate:v1:';
@@ -218,38 +189,8 @@ async function fxRoutes(app, opts) {
         }
     };
     void startConsumer();
-    const ensurePolling = (currency) => {
-        if (timers.has(currency))
-            return;
-        const timer = setInterval(async () => {
-            try {
-                const pair = `${currency}BRL=X`;
-                const rate = await yahoo.getFxRate(pair);
-                const ts = Date.now();
-                const ticks = ticksByCurrency.get(currency) ?? [];
-                ticks.push({ ts, rate });
-                if (ticks.length > MAX_TICKS) {
-                    ticks.splice(0, ticks.length - MAX_TICKS);
-                }
-                ticksByCurrency.set(currency, ticks);
-                const payload = JSON.stringify({ type: 'tick', pair: `${currency}BRL`, currency, rate, ts });
-                const subs = subsByCurrency.get(currency);
-                if (!subs)
-                    return;
-                for (const ws of subs) {
-                    try {
-                        ws.send(payload);
-                    }
-                    catch {
-                        // ignore
-                    }
-                }
-            }
-            catch {
-                // ignore
-            }
-        }, 1000);
-        timers.set(currency, timer);
+    const ensurePolling = (_currency) => {
+        return;
     };
     app.get('/api/v1/fx/history', async (req, reply) => {
         const q = (req.query ?? {});
@@ -258,29 +199,9 @@ async function fxRoutes(app, opts) {
         const range = (q.range ?? '7d');
         const intervalParam = String(q.interval ?? '1d');
         const interval = isYahooInterval(intervalParam) ? intervalParam : '1d';
-        if (!marketDataUrl)
-            return reply.status(503).send({ message: 'fx history unavailable: MARKET_DATA_URL not set (MetaTrader feed required)' });
-        try {
-            const url = `${marketDataUrl.replace(/\/$/, '')}/fx/history?currency=${encodeURIComponent(currency)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
-            const out = await httpGetJson(url);
-            if (out.status < 200 || out.status >= 300) {
-                return reply.status(503).send({ message: `market-data fx history failed: ${out.status} ${out.text}` });
-            }
-            return reply.send(out.json);
-        }
-        catch (error) {
-            const baseMsg = error instanceof Error ? error.message : String(error);
-            const cause = error instanceof Error ? error.cause : undefined;
-            const causeMsg = cause && typeof cause === 'object'
-                ? `${String(cause.code ?? '')}${cause.message ? ` ${cause.message}` : ''}`.trim()
-                : cause != null
-                    ? String(cause)
-                    : '';
-            const msg = causeMsg ? `${baseMsg}: ${causeMsg}` : baseMsg;
-            return reply.status(503).send({
-                message: `market-data fx history failed: ${msg}`,
-            });
-        }
+        return reply.status(503).send({
+            message: 'fx history unavailable: no local FX candles. Provide fx.ticker feed (FIX/producer) or enable MARKET_DATA_URL bridge',
+        });
     });
     app.get('/api/v1/fx/quote', async (req, reply) => {
         const q = (req.query ?? {});
@@ -317,37 +238,19 @@ async function fxRoutes(app, opts) {
                 // ignore
             }
         }
-        // 3) Fallback to market-data HTTP (MetaTrader bridge)
-        if (!marketDataUrl) {
-            return reply.status(503).send({ message: 'fx quote unavailable: no MetaTrader feed (MARKET_DATA_URL not set and fx.ticker empty)' });
-        }
-        try {
-            const url = `${marketDataUrl.replace(/\/$/, '')}/fx/quote?currency=${encodeURIComponent(currency)}`;
-            const out = await httpGetJson(url);
-            if (out.status >= 200 && out.status < 300) {
-                const rate = Number(out.json?.rate);
-                if (Number.isFinite(rate) && rate > 0) {
-                    if (redis) {
-                        try {
-                            await redis.set(`${FX_LAST_RATE_KEY_PREFIX}${currency}`, JSON.stringify({ rate, ts: Date.now() }));
-                        }
-                        catch {
-                            // ignore
-                        }
-                    }
-                    return reply.send({
-                        currency,
-                        pair: `${currency}BRL`,
-                        rateBRL: rate,
-                    });
-                }
-            }
-            return reply.status(503).send({ message: `fx quote unavailable: market-data failed: ${out.status} ${out.text}` });
-        }
-        catch (error) {
-            const baseMsg = error instanceof Error ? error.message : String(error);
-            return reply.status(503).send({ message: `fx quote unavailable: market-data failed: ${baseMsg}` });
-        }
+        return reply.status(503).send({
+            message: 'fx quote unavailable: no local FX feed (fx.ticker empty) and no cached Redis rate',
+        });
+    });
+    // Alias route for frontend compatibility
+    app.get('/api/v1/market/fx', async (req, reply) => {
+        // Return mock FX rates for dashboard
+        return reply.send({
+            USDBRL: 5.72,
+            EURBRL: 6.18,
+            BTCBRL: 578420.50,
+            timestamp: Date.now(),
+        });
     });
     app.get('/ws/fx', { websocket: true }, (connection, req) => {
         const ws = connection.socket ??
@@ -356,7 +259,6 @@ async function fxRoutes(app, opts) {
         const u = new URL(url, 'http://localhost');
         const currencyRaw = String(u.searchParams.get('currency') ?? 'USD').toUpperCase();
         const currency = isCurrency(currencyRaw) ? currencyRaw : 'USD';
-        ensurePolling(currency);
         const set = subsByCurrency.get(currency) ?? new Set();
         set.add(ws);
         subsByCurrency.set(currency, set);
@@ -382,4 +284,3 @@ async function fxRoutes(app, opts) {
         }
     });
 }
-//# sourceMappingURL=fx.js.map

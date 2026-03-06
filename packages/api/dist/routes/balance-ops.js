@@ -172,5 +172,12 @@ async function balanceOpsRoutes(app, opts) {
             balance,
         });
     });
+    // GET /api/v1/account/balance - Alias for frontend compatibility (uses default account)
+    app.get('/api/v1/account/balance', async (_request, reply) => {
+        const balance = await getBalance('default');
+        return reply.status(200).send({
+            accountId: 'default',
+            balance,
+        });
+    });
 }
-//# sourceMappingURL=balance-ops.js.map

@@ -62,4 +62,3 @@ main().catch((err) => {
     console.error('Fatal error:', err);
     process.exit(1);
 });
-//# sourceMappingURL=stock-ticker.js.map

@@ -8,11 +8,12 @@ const fastify_1 = __importDefault(require("fastify"));
 const ioredis_1 = __importDefault(require("ioredis"));
 const pg_1 = require("pg");
 const path_1 = __importDefault(require("path"));
-const static_1 = __importDefault(require("@fastify/static"));
 const websocket_1 = __importDefault(require("@fastify/websocket"));
 const cookie_1 = __importDefault(require("@fastify/cookie"));
 const jwt_1 = __importDefault(require("@fastify/jwt"));
 const node_dns_1 = __importDefault(require("node:dns"));
+const dotenv_1 = require("dotenv");
+(0, dotenv_1.config)({ path: path_1.default.resolve(process.cwd(), '.env') }); // Load .env from project root
 const shared_1 = require("@transaction-auth-engine/shared");
 const kafka_producer_js_1 = require("./infrastructure/kafka-producer.js");
 const swagger_js_1 = require("./plugins/swagger.js");
@@ -31,6 +32,9 @@ const stocks_ws_js_1 = require("./routes/stocks-ws.js");
 const btc_ws_js_1 = require("./routes/btc-ws.js");
 const fx_js_1 = require("./routes/fx.js");
 const teams_js_1 = require("./routes/teams.js");
+const market_groups_js_1 = require("./routes/market-groups.js");
+const sectors_js_1 = require("./routes/sectors.js");
+const social_js_1 = __importDefault(require("./routes/social.js"));
 const shared_2 = require("@transaction-auth-engine/shared");
 const metrics_js_1 = require("./infrastructure/metrics.js");
 const migrations_js_1 = require("./infrastructure/migrations.js");
@@ -81,6 +85,13 @@ async function ensureKafkaReady(producer, logger) {
 async function buildApp() {
     const logger = (0, shared_1.createLogger)('api');
     const app = (0, fastify_1.default)({ logger: false });
+    // CORS support
+    await app.register(import('@fastify/cors'), {
+        origin: ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:3000', 'http://127.0.0.1:3000'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization'],
+        credentials: true
+    });
     // Request timing and metrics hook
     app.addHook('onRequest', (request, _reply, done) => {
         request.log = logger.child({
@@ -113,24 +124,36 @@ async function buildApp() {
     const publicMonorepo = path_1.default.join(process.cwd(), 'packages', 'api', 'public');
     const resolvedPublic = fs.existsSync(webDistLocal) ? webDistLocal : fs.existsSync(webDistMonorepo) ? webDistMonorepo : fs.existsSync(publicLocal) ? publicLocal : publicMonorepo;
     if (fs.existsSync(resolvedPublic)) {
-        await app.register(static_1.default, {
-            root: resolvedPublic,
-            prefix: '/',
-            setHeaders: (res, pathname) => {
-                const normalized = String(pathname || '').replace(/\\/g, '/');
-                if (normalized.endsWith('/app.js') || normalized.endsWith('/index.html') || normalized === 'app.js' || normalized === 'index.html') {
-                    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-                    res.setHeader('Pragma', 'no-cache');
-                    res.setHeader('Expires', '0');
-                    res.setHeader('Surrogate-Control', 'no-store');
-                }
-            },
-        });
-        app.get('/', (_req, reply) => reply.sendFile('index.html'));
-        app.get('/login', (_req, reply) => reply.sendFile('index.html'));
-        app.get('/register', (_req, reply) => reply.sendFile('index.html'));
-        app.get('/app', (_req, reply) => reply.sendFile('index.html'));
-        app.get('/app/*', (_req, reply) => reply.sendFile('index.html'));
+        const nodeMajor = Number(String(process.versions.node || '0').split('.')[0] || 0);
+        if (nodeMajor >= 22) {
+            logger.warn({ node: process.versions.node }, '@fastify/static disabled on Node >=22; running API without static assets');
+        }
+        else {
+            try {
+                const fastifyStatic = (await import('@fastify/static')).default;
+                await app.register(fastifyStatic, {
+                    root: resolvedPublic,
+                    prefix: '/',
+                    setHeaders: (res, pathname) => {
+                        const normalized = String(pathname || '').replace(/\\/g, '/');
+                        if (normalized.endsWith('/app.js') || normalized.endsWith('/index.html') || normalized === 'app.js' || normalized === 'index.html') {
+                            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+                            res.setHeader('Pragma', 'no-cache');
+                            res.setHeader('Expires', '0');
+                            res.setHeader('Surrogate-Control', 'no-store');
+                        }
+                    },
+                });
+                app.get('/', (_req, reply) => reply.sendFile('index.html'));
+                app.get('/login', (_req, reply) => reply.sendFile('index.html'));
+                app.get('/register', (_req, reply) => reply.sendFile('index.html'));
+                app.get('/app', (_req, reply) => reply.sendFile('index.html'));
+                app.get('/app/*', (_req, reply) => reply.sendFile('index.html'));
+            }
+            catch (err) {
+                logger.warn({ err }, '@fastify/static unavailable; running API without static assets');
+            }
+        }
     }
     const producer = new kafka_producer_js_1.ApiKafkaProducer({ brokers: KAFKA_BROKERS });
     await ensureKafkaReady(producer, logger);
@@ -139,6 +162,28 @@ async function buildApp() {
     let redis;
     try {
         redis = new ioredis_1.default(REDIS_URL);
+        try {
+            redis.on('error', () => {
+                // avoid noisy unhandled error events; routes already handle redis failures
+            });
+        }
+        catch {
+            // ignore
+        }
+        const pingTimeoutMs = Number(process.env.REDIS_PING_TIMEOUT_MS ?? 1500);
+        const pingOk = await Promise.race([
+            redis.ping().then(() => true).catch(() => false),
+            new Promise((resolve) => setTimeout(() => resolve(false), pingTimeoutMs)),
+        ]);
+        if (!pingOk) {
+            try {
+                redis.disconnect();
+            }
+            catch {
+                // ignore
+            }
+            redis = undefined;
+        }
     }
     catch {
         redis = undefined;
@@ -150,6 +195,7 @@ async function buildApp() {
             connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS ?? 5000),
             idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS ?? 30000),
             max: Number(process.env.PG_POOL_MAX ?? 10),
+            ssl: { rejectUnauthorized: false }, // Required for Supabase
         });
         const ok = await ensurePgReady(pg, logger);
         if (!ok) {
@@ -164,14 +210,15 @@ async function buildApp() {
     }
     await app.register(cookie_1.default);
     const jwtSecret = process.env.JWT_SECRET;
-    if (pg && !jwtSecret) {
-        throw new Error('JWT_SECRET is required when DATABASE_URL is set');
-    }
+    // JWT_SECRET is optional - we support Supabase JWT (ES256) without it
     if (jwtSecret) {
         await app.register(jwt_1.default, { secret: jwtSecret });
     }
     if (pg)
         await (0, migrations_js_1.runMigrations)(pg);
+    await app.register(market_groups_js_1.marketGroupsRoutes);
+    await app.register(sectors_js_1.sectorRoutes, { redis });
+    await app.register(social_js_1.default, { pg });
     await app.register(transactions_js_1.transactionRoutes, { producer, redis });
     await app.register(orders_js_1.orderRoutes, { producer, redis, mercadoBitcoin, brapi });
     await app.register(fx_js_1.fxRoutes, { redis });
@@ -189,8 +236,9 @@ async function buildApp() {
         await app.register(integrity_js_1.integrityRoutes, { redis, pg });
         await app.register(realtime_js_1.realtimeRoutes, { redis, pg });
     }
+    // Register auth routes with or without pg (supports Supabase JWT and mock login)
+    await app.register(auth_js_1.authRoutes, { pg, redis });
     if (pg) {
-        await app.register(auth_js_1.authRoutes, { pg, redis });
         await app.register(chat_js_1.chatRoutes, { pg });
         await app.register(news_js_1.newsRoutes, { pg });
         await app.register(balance_at_js_1.balanceAtRoutes, { pg });
@@ -220,4 +268,3 @@ async function main() {
     }
 }
 main();
-//# sourceMappingURL=app.js.map

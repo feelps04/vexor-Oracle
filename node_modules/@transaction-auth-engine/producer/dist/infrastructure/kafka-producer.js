@@ -88,4 +88,3 @@ class TransactionKafkaProducer {
     }
 }
 exports.TransactionKafkaProducer = TransactionKafkaProducer;
-//# sourceMappingURL=kafka-producer.js.map

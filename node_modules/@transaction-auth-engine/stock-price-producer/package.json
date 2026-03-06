@@ -9,8 +9,9 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@transaction-auth-engine/shared": "*",
-    "kafkajs": "^2.2.4"
+    "kafkajs": "^2.2.4",
+    "ffi-napi": "^4.0.3",
+    "ref-napi": "^3.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

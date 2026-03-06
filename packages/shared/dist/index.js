@@ -20,4 +20,3 @@ var brapi_client_js_1 = require("./services/brapi-client.js");
 Object.defineProperty(exports, "BrapiClient", { enumerable: true, get: function () { return brapi_client_js_1.BrapiClient; } });
 var latency_sensor_js_1 = require("./services/latency-sensor.js");
 Object.defineProperty(exports, "LatencySensor", { enumerable: true, get: function () { return latency_sensor_js_1.LatencySensor; } });
-//# sourceMappingURL=index.js.map

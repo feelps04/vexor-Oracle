@@ -57,6 +57,21 @@ async function authRoutes(app, opts) {
     }, async (request, reply) => {
         const email = String(request.body.email || '').trim().toLowerCase();
         const password = String(request.body.password || '');
+        // Mock register when PostgreSQL not available
+        if (!pg) {
+            const mockUserId = 'mock-user-' + crypto_1.default.randomBytes(8).toString('hex');
+            const mockAccountId = 'mock-account-' + crypto_1.default.randomBytes(8).toString('hex');
+            // Use app.jwt if available, otherwise create a simple mock token
+            let accessToken;
+            if (app.jwt && typeof app.jwt.sign === 'function') {
+                accessToken = app.jwt.sign({ email, accountId: mockAccountId }, { sub: mockUserId, expiresIn: accessTtlSec });
+            }
+            else {
+                // Simple mock token for development
+                accessToken = 'mock.' + Buffer.from(JSON.stringify({ sub: mockUserId, email, accountId: mockAccountId, exp: Math.floor(Date.now() / 1000) + accessTtlSec })).toString('base64url') + '.mock';
+            }
+            return reply.code(201).send({ userId: mockUserId, accountId: mockAccountId, accessToken });
+        }
         const passwordHash = await bcryptjs_1.default.hash(password, 10);
         let client;
         try {
@@ -132,6 +147,21 @@ async function authRoutes(app, opts) {
     }, async (request, reply) => {
         const email = String(request.body.email || '').trim().toLowerCase();
         const password = String(request.body.password || '');
+        // Mock login when PostgreSQL not available
+        if (!pg) {
+            const mockUserId = 'mock-user-' + crypto_1.default.randomBytes(8).toString('hex');
+            const mockAccountId = 'mock-account-' + crypto_1.default.randomBytes(8).toString('hex');
+            // Use app.jwt if available, otherwise create a simple mock token
+            let accessToken;
+            if (app.jwt && typeof app.jwt.sign === 'function') {
+                accessToken = app.jwt.sign({ email, accountId: mockAccountId }, { sub: mockUserId, expiresIn: accessTtlSec });
+            }
+            else {
+                // Simple mock token for development
+                accessToken = 'mock.' + Buffer.from(JSON.stringify({ sub: mockUserId, email, accountId: mockAccountId, exp: Math.floor(Date.now() / 1000) + accessTtlSec })).toString('base64url') + '.mock';
+            }
+            return reply.send({ userId: mockUserId, accountId: mockAccountId, accessToken });
+        }
         try {
             const userRes = await pg.query('SELECT id, password_hash FROM users WHERE email = $1', [email]);
             if (userRes.rowCount === 0) {
@@ -177,4 +207,3 @@ async function authRoutes(app, opts) {
         }
     });
 }
-//# sourceMappingURL=auth.js.map

@@ -17,4 +17,3 @@ async function validateBankCode(bankCode) {
     }
     return response.data;
 }
-//# sourceMappingURL=validate-bank.js.map

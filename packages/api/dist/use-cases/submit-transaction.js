@@ -8,4 +8,3 @@ async function submitTransaction(producer, input) {
     await producer.sendTransaction(transaction);
     return transaction;
 }
-//# sourceMappingURL=submit-transaction.js.map

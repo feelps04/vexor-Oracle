@@ -105,4 +105,3 @@ async function balanceAtRoutes(app, opts) {
         return reply.status(200).send({ accountId, points });
     });
 }
-//# sourceMappingURL=balance-at.js.map

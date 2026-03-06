@@ -1,0 +1,2 @@
+{"level":"warn","time":"2026-03-05T03:34:51.859Z","service":"api","node":"24.14.0","msg":"@fastify/static disabled on Node >=22; running API without static assets"}
+^C

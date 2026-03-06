@@ -1,0 +1,17 @@
+{
+  "PETR4": { "symbol": "PETR4", "priceBRL": 38.50, "bid": 38.48, "ask": 38.52, "spread": 0.04, "spreadPct": 0.10, "source": "mt5", "ts": 1709500000000 },
+  "VALE3": { "symbol": "VALE3", "priceBRL": 68.20, "bid": 68.18, "ask": 68.22, "spread": 0.04, "spreadPct": 0.06, "source": "mt5", "ts": 1709500000000 },
+  "ITUB4": { "symbol": "ITUB4", "priceBRL": 32.10, "bid": 32.08, "ask": 32.12, "spread": 0.04, "spreadPct": 0.12, "source": "mt5", "ts": 1709500000000 },
+  "BBDC4": { "symbol": "BBDC4", "priceBRL": 14.25, "bid": 14.24, "ask": 14.26, "spread": 0.02, "spreadPct": 0.14, "source": "mt5", "ts": 1709500000000 },
+  "ABEV3": { "symbol": "ABEV3", "priceBRL": 12.80, "bid": 12.79, "ask": 12.81, "spread": 0.02, "spreadPct": 0.16, "source": "mt5", "ts": 1709500000000 },
+  "WEGE3": { "symbol": "WEGE3", "priceBRL": 35.40, "bid": 35.38, "ask": 35.42, "spread": 0.04, "spreadPct": 0.11, "source": "mt5", "ts": 1709500000000 },
+  "RENT3": { "symbol": "RENT3", "priceBRL": 48.90, "bid": 48.88, "ask": 48.92, "spread": 0.04, "spreadPct": 0.08, "source": "mt5", "ts": 1709500000000 },
+  "MGLU3": { "symbol": "MGLU3", "priceBRL": 2.15, "bid": 2.14, "ask": 2.16, "spread": 0.02, "spreadPct": 0.93, "source": "mt5", "ts": 1709500000000 },
+  "BBAS3": { "symbol": "BBAS3", "priceBRL": 58.30, "bid": 58.28, "ask": 58.32, "spread": 0.04, "spreadPct": 0.07, "source": "mt5", "ts": 1709500000000 },
+  "SUZB3": { "symbol": "SUZB3", "priceBRL": 52.80, "bid": 52.78, "ask": 52.82, "spread": 0.04, "spreadPct": 0.08, "source": "mt5", "ts": 1709500000000 },
+  "B3SA3": { "symbol": "B3SA3", "priceBRL": 13.45, "bid": 13.44, "ask": 13.46, "spread": 0.02, "spreadPct": 0.15, "source": "mt5", "ts": 1709500000000 },
+  "PETR3": { "symbol": "PETR3", "priceBRL": 39.20, "bid": 39.18, "ask": 39.22, "spread": 0.04, "spreadPct": 0.10, "source": "mt5", "ts": 1709500000000 },
+  "VALE5": { "symbol": "VALE5", "priceBRL": 67.80, "bid": 67.78, "ask": 67.82, "spread": 0.04, "spreadPct": 0.06, "source": "mt5", "ts": 1709500000000 },
+  "ITSA4": { "symbol": "ITSA4", "priceBRL": 10.50, "bid": 10.49, "ask": 10.51, "spread": 0.02, "spreadPct": 0.19, "source": "mt5", "ts": 1709500000000 },
+  "CMIG4": { "symbol": "CMIG4", "priceBRL": 12.30, "bid": 12.29, "ask": 12.31, "spread": 0.02, "spreadPct": 0.16, "source": "mt5", "ts": 1709500000000 }
+}

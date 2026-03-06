@@ -21,4 +21,3 @@ function createLogger(service, baseBindings) {
 function withCorrelationId(logger, correlationId) {
     return logger.child({ correlationId });
 }
-//# sourceMappingURL=index.js.map

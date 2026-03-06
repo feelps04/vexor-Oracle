@@ -115,4 +115,3 @@ class YahooFinanceClient {
     }
 }
 exports.YahooFinanceClient = YahooFinanceClient;
-//# sourceMappingURL=yahoo-finance-client.js.map

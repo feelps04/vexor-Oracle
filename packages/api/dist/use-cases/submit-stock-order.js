@@ -13,4 +13,3 @@ async function submitStockOrder(producer, brapi, input) {
     await producer.sendTransaction(transaction);
     return transaction;
 }
-//# sourceMappingURL=submit-stock-order.js.map

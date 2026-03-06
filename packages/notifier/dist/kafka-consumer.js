@@ -69,4 +69,3 @@ class NotifierConsumer {
     }
 }
 exports.NotifierConsumer = NotifierConsumer;
-//# sourceMappingURL=kafka-consumer.js.map

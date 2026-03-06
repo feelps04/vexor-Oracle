@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useOutletContext } from 'react-router-dom'
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import { apiGet } from '../../lib/api'
 
-type SymbolsResponse = { group: string; total: number; symbols: string[] }
+type GroupSymbolsResponse = {
+  group: string
+  total: number
+  symbols: string[]
+}
 
 type AssetItem = {
   symbol: string
@@ -18,87 +22,206 @@ type TerminalContext = {
   accountId: string
 }
 
-export default function GroupPage() {
+export function GroupPage() {
+  const navigate = useNavigate()
   const params = useParams()
-  const { selectedAsset, setSelectedAsset, assets } = useOutletContext<TerminalContext>()
   const group = String(params.group || '').toUpperCase()
+  const { selectedAsset, setSelectedAsset } = useOutletContext<TerminalContext>()
 
-  const [meta, setMeta] = useState<{ total: number } | null>(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [total, setTotal] = useState<number>(0)
+  const [symbols, setSymbols] = useState<string[]>([])
+  const [limit, setLimit] = useState<number>(400)
+  const [q, setQ] = useState<string>('')
 
-  const symbolsInMemory = useMemo(() => assets.map((a) => a.symbol), [assets])
+  useEffect(() => {
+    setLimit(400)
+    setQ('')
+  }, [group])
 
   useEffect(() => {
     let cancelled = false
     async function load() {
+      if (!group) {
+        setSymbols([])
+        setTotal(0)
+        setLoading(false)
+        return
+      }
+      setLoading(true)
       setError(null)
       try {
-        const res = await apiGet<SymbolsResponse>(`/api/v1/market/groups/${encodeURIComponent(group)}/symbols?limit=200`)
+        const res = await apiGet<GroupSymbolsResponse>(
+          `/api/v1/market/groups/${encodeURIComponent(group)}/symbols?limit=${encodeURIComponent(String(limit))}`
+        )
         if (cancelled) return
-        setMeta({ total: Number(res?.total) || 0 })
+        setSymbols(Array.isArray(res?.symbols) ? res.symbols : [])
+        setTotal(Number(res?.total) || 0)
       } catch (e) {
         if (cancelled) return
         setError(e instanceof Error ? e.message : String(e))
-        setMeta(null)
+        setSymbols([])
+        setTotal(0)
+      } finally {
+        if (cancelled) return
+        setLoading(false)
       }
     }
-    if (group) void load()
+    void load()
     return () => {
       cancelled = true
     }
-  }, [group])
+  }, [group, limit])
+
+  const filtered = useMemo(() => {
+    const qq = String(q || '').trim().toUpperCase()
+    if (!qq) return symbols
+    return symbols.filter((s) => String(s || '').toUpperCase().includes(qq))
+  }, [q, symbols])
+
+  const canLoadMore = useMemo(() => {
+    const t = Number(total) || 0
+    if (t <= 0) return symbols.length > 0 && symbols.length >= limit
+    return symbols.length < t
+  }, [limit, symbols.length, total])
 
   return (
-    <div style={{ padding: 20, maxWidth: 1200, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <div>
-          <h1 style={{ margin: 0 }}>{group || 'Grupo'}</h1>
-          <div style={{ color: '#8b949e', fontSize: 13 }}>
-            {meta ? `${meta.total} símbolos no grupo` : '—'}
+    <div style={{ display: 'grid', gap: 14, maxWidth: 1200 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Link to="/app/groups" style={{ color: '#58a6ff', textDecoration: 'none' }}>
+            ← Grupos
+          </Link>
+          <div>
+            <div style={{ fontSize: 12, color: '#8b949e' }}>Coleção</div>
+            <h2 style={{ margin: 0 }}>{group || '—'}</h2>
           </div>
         </div>
-        <Link to="/app/groups" style={{ color: '#58a6ff', textDecoration: 'none' }}>
-          Voltar
-        </Link>
+
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 12, color: '#8b949e' }}>Carregados</div>
+          <div style={{ fontWeight: 900 }}>{symbols.length}{total ? ` / ${total}` : ''}</div>
+        </div>
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ color: '#8b949e', fontSize: 13 }}>
+          Mostrando: <span style={{ color: '#e6edf3', fontWeight: 900 }}>{filtered.length}</span>
+        </div>
+        <button
+          onClick={() => navigate('/app/trading')}
+          disabled={!selectedAsset}
+          style={{
+            height: 36,
+            padding: '0 12px',
+            borderRadius: 10,
+            border: '1px solid rgba(48, 54, 61, 0.5)',
+            background: selectedAsset ? 'rgba(88, 166, 255, 0.12)' : 'rgba(48, 54, 61, 0.18)',
+            color: selectedAsset ? '#58a6ff' : '#8b949e',
+            fontWeight: 900,
+            cursor: selectedAsset ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Abrir Trading
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 160px', gap: 10, alignItems: 'end' }}>
+        <div>
+          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 6 }}>Buscar ativo no grupo</div>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Ex: CYRE4"
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 10,
+              border: '1px solid rgba(48, 54, 61, 0.6)',
+              background: 'rgba(13, 17, 23, 0.6)',
+              color: '#e6edf3',
+              fontSize: 13,
+            }}
+          />
+        </div>
+
+        <button
+          onClick={() => setLimit((x) => Math.min(5000, x + 400))}
+          disabled={!canLoadMore || loading}
+          style={{
+            height: 40,
+            borderRadius: 10,
+            border: '1px solid rgba(48, 54, 61, 0.5)',
+            background: !canLoadMore || loading ? 'rgba(48, 54, 61, 0.18)' : 'rgba(88, 166, 255, 0.12)',
+            color: !canLoadMore || loading ? '#8b949e' : '#58a6ff',
+            fontWeight: 900,
+            cursor: !canLoadMore || loading ? 'not-allowed' : 'pointer',
+          }}
+        >
+          Carregar mais
+        </button>
+      </div>
+
+      {loading ? <div style={{ color: '#8b949e' }}>Carregando símbolos...</div> : null}
       {error ? (
-        <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, border: '1px solid rgba(248, 81, 73, 0.3)', background: 'rgba(248, 81, 73, 0.08)', color: '#f85149' }}>
+        <div style={{ padding: 12, borderRadius: 12, border: '1px solid rgba(248, 81, 73, 0.3)', background: 'rgba(248, 81, 73, 0.08)', color: '#f85149' }}>
           {error}
         </div>
       ) : null}
 
-      <div style={{ marginBottom: 14, color: '#8b949e', fontSize: 13 }}>
-        Os preços são atualizados em tempo real e a lista é limitada para evitar sobrecarga.
-      </div>
+      <div style={{
+        border: '1px solid rgba(48, 54, 61, 0.35)',
+        borderRadius: 12,
+        background: 'rgba(48, 54, 61, 0.12)',
+        overflow: 'hidden',
+      }}>
+        <div style={{ padding: 12, borderBottom: '1px solid rgba(48, 54, 61, 0.35)', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ color: '#8b949e', fontSize: 13 }}>
+            Clique em um ativo para abrir no Trading.
+          </div>
+          <div style={{ color: '#8b949e', fontSize: 13 }}>
+            Selecionado: <span style={{ color: '#e6edf3', fontWeight: 900 }}>{selectedAsset || '—'}</span>
+          </div>
+        </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
-        {assets.map((a) => (
-          <button
-            key={a.symbol}
-            onClick={() => setSelectedAsset(a.symbol)}
-            style={{
-              textAlign: 'left',
-              borderRadius: 12,
-              padding: 12,
-              border: a.symbol === selectedAsset ? '1px solid rgba(88, 166, 255, 0.6)' : '1px solid rgba(48, 54, 61, 0.35)',
-              background: a.symbol === selectedAsset ? 'rgba(88, 166, 255, 0.08)' : 'rgba(48, 54, 61, 0.2)',
-              color: '#e6edf3',
-              cursor: 'pointer',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-              <div style={{ fontWeight: 800 }}>{a.symbol}</div>
-              <div style={{ fontWeight: 700 }}>{Number.isFinite(a.price) && a.price > 0 ? a.price.toFixed(2) : '—'}</div>
-            </div>
-            <div style={{ color: '#8b949e', fontSize: 12, marginTop: 4 }}>{a.name}</div>
-          </button>
-        ))}
-      </div>
+        <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
+          {filtered.map((s) => {
+            const sym = String(s || '').toUpperCase()
+            const active = sym === String(selectedAsset || '').toUpperCase()
+            return (
+              <button
+                key={sym}
+                onClick={() => setSelectedAsset(sym)}
+                onDoubleClick={() => {
+                  setSelectedAsset(sym)
+                  navigate('/app/trading')
+                }}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '10px 12px',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(48, 54, 61, 0.22)',
+                  background: active ? 'rgba(88, 166, 255, 0.08)' : 'transparent',
+                  color: active ? '#58a6ff' : '#e6edf3',
+                  cursor: 'pointer',
+                  fontWeight: 800,
+                }}
+              >
+                {sym}
+              </button>
+            )
+          })}
 
-      {symbolsInMemory.length === 0 ? (
-        <div style={{ marginTop: 16, color: '#8b949e' }}>Nenhum símbolo carregado para este grupo.</div>
-      ) : null}
+          {filtered.length === 0 && !loading ? (
+            <div style={{ padding: 12, color: '#8b949e' }}>Nenhum ativo encontrado com esse filtro.</div>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }
+
+export default GroupPage
+

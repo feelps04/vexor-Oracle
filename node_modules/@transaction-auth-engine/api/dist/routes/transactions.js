@@ -107,4 +107,3 @@ async function transactionRoutes(app, opts) {
         });
     });
 }
-//# sourceMappingURL=transactions.js.map

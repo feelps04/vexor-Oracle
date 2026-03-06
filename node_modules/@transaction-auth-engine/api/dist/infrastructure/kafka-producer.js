@@ -53,4 +53,3 @@ class ApiKafkaProducer {
     }
 }
 exports.ApiKafkaProducer = ApiKafkaProducer;
-//# sourceMappingURL=kafka-producer.js.map

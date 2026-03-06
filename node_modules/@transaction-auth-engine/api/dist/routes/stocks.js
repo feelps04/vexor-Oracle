@@ -5,6 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.stockRoutes = stockRoutes;
 const node_dns_1 = __importDefault(require("node:dns"));
+const promises_1 = __importDefault(require("node:fs/promises"));
+const node_path_1 = __importDefault(require("node:path"));
 const DEFAULT_STOCKS = [
     // Financeiro e Seguros
     'B3SA3',
@@ -184,6 +186,61 @@ async function httpGetJson(url) {
     }
     return { status: res.status, text, json };
 }
+async function httpPostJson(url, body) {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(25_000),
+    });
+    const text = await res.text();
+    let json = null;
+    try {
+        json = text ? JSON.parse(text) : null;
+    }
+    catch {
+        json = null;
+    }
+    return { status: res.status, text, json };
+}
+// Cache MMF do Python API
+const PYTHON_API_URL = 'http://127.0.0.1:8765';
+let mmfCache = null;
+let mmfCacheTime = 0;
+async function getMmfCache() {
+    const now = Date.now();
+    // Cache por 500ms
+    if (mmfCache && now - mmfCacheTime < 500) {
+        return mmfCache.symbols;
+    }
+    try {
+        const { json } = await httpGetJson(`${PYTHON_API_URL}/mmf/debug`);
+        if (json && typeof json === 'object' && 'symbols' in json) {
+            mmfCache = json;
+            mmfCacheTime = now;
+            return mmfCache.symbols;
+        }
+    }
+    catch {
+        // ignore
+    }
+    return [];
+}
+async function getTickFromPython(symbol) {
+    try {
+        const { json } = await httpPostJson(`${PYTHON_API_URL}/tick`, { symbol });
+        if (json && typeof json === 'object' && 'bid' in json) {
+            const j = json;
+            if (j.bid && j.bid > 0) {
+                return { bid: j.bid, ask: j.ask || j.bid, broker: j.broker || 'python' };
+            }
+        }
+    }
+    catch {
+        // ignore
+    }
+    return null;
+}
 async function stockRoutes(app, opts) {
     const marketDataUrl = process.env.MARKET_DATA_URL;
     const redis = opts?.redis;
@@ -252,25 +309,54 @@ async function stockRoutes(app, opts) {
             ? unique
             : Array.from(new Set([...Object.keys(currentFuturesContracts), ...extraSymbols])).slice(0, 200);
         if (!redis) {
-            return reply.status(200).send({
-                items: defaults.map((s) => {
-                    const r = resolveFuturesSymbol(s, currentFuturesContracts);
-                    return {
+            // Fallback para Python API quando Redis não configurado
+            const items = [];
+            const mmfSymbols = await getMmfCache();
+            for (const s of defaults) {
+                const r = resolveFuturesSymbol(s, currentFuturesContracts);
+                // Busca no cache MMF
+                const mmfMatch = mmfSymbols.find(m => m.symbol === r.resolved || m.symbol === s);
+                if (mmfMatch && mmfMatch.bid > 0) {
+                    items.push({
                         requested: r.requested,
-                        symbol: r.resolved,
-                        status: 'redis_not_configured',
-                        message: 'Redis not configured (real-time feed unavailable)',
-                    };
-                }),
-            });
+                        symbol: mmfMatch.symbol,
+                        status: 'ok',
+                        priceBRL: mmfMatch.bid,
+                    });
+                }
+                else {
+                    // Tenta buscar tick diretamente
+                    const tick = await getTickFromPython(r.resolved);
+                    if (tick && tick.bid > 0) {
+                        items.push({
+                            requested: r.requested,
+                            symbol: r.resolved,
+                            status: 'ok',
+                            priceBRL: tick.bid,
+                        });
+                    }
+                    else {
+                        items.push({
+                            requested: r.requested,
+                            symbol: r.resolved,
+                            status: 'no_data',
+                            message: 'no real-time price yet for symbol',
+                        });
+                    }
+                }
+            }
+            return reply.status(200).send({ items });
         }
         const items = [];
+        // Busca cache MMF do Python API para fallback
+        const mmfSymbols = await getMmfCache();
         // Check both requested and resolved symbols (so user can pass WIN$ but also WINJ26).
         for (const s of defaults) {
             const resolved = buildSymbolCandidates(s, currentFuturesContracts, symbolAliases);
             const candidates = resolved.candidates;
             let foundPrice = null;
             let foundSym = null;
+            // 1. Tenta Redis primeiro
             for (const c of candidates) {
                 try {
                     const v = await redis.get(`${LAST_PRICE_PREFIX}${c}`);
@@ -283,6 +369,25 @@ async function stockRoutes(app, opts) {
                 }
                 catch {
                     // ignore
+                }
+            }
+            // 2. Se não achou no Redis, tenta cache MMF do Python API
+            if (foundPrice == null && mmfSymbols.length > 0) {
+                for (const c of candidates) {
+                    const mmfMatch = mmfSymbols.find(m => m.symbol === c);
+                    if (mmfMatch && mmfMatch.bid > 0) {
+                        foundPrice = mmfMatch.bid;
+                        foundSym = mmfMatch.symbol;
+                        break;
+                    }
+                }
+            }
+            // 3. Se ainda não achou, busca tick diretamente do Python API
+            if (foundPrice == null) {
+                const tick = await getTickFromPython(resolved.requested);
+                if (tick && tick.bid > 0) {
+                    foundPrice = tick.bid;
+                    foundSym = resolved.requested;
                 }
             }
             if (foundPrice != null && foundSym) {
@@ -532,5 +637,28 @@ async function stockRoutes(app, opts) {
             return reply.status(503).send({ message: `stocks quote failed: Redis error: ${baseMsg}` });
         }
     });
+    // MT5 candles from JSON file
+    const mt5CandlesPath = node_path_1.default.resolve(process.cwd(), '..', '..', 'mt5_candles.json');
+    let mt5CandlesCache = null;
+    let mt5CandlesTime = 0;
+    app.get('/api/v1/mt5/:symbol/candles', async (request, reply) => {
+        const symbol = request.params.symbol.toUpperCase();
+        try {
+            // Cache por 30 segundos
+            const now = Date.now();
+            if (!mt5CandlesCache || now - mt5CandlesTime > 30000) {
+                const data = await promises_1.default.readFile(mt5CandlesPath, 'utf-8');
+                mt5CandlesCache = JSON.parse(data);
+                mt5CandlesTime = now;
+            }
+            const candles = mt5CandlesCache?.[symbol];
+            if (candles && candles.length > 0) {
+                return reply.status(200).send({ symbol, candles });
+            }
+            return reply.status(404).send({ message: `No MT5 candles for ${symbol}` });
+        }
+        catch (err) {
+            return reply.status(503).send({ message: `MT5 candles error: ${err instanceof Error ? err.message : String(err)}` });
+        }
+    });
 }
-//# sourceMappingURL=stocks.js.map

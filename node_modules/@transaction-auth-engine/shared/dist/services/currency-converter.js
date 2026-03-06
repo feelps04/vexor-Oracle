@@ -50,4 +50,3 @@ class CurrencyConverter {
     }
 }
 exports.CurrencyConverter = CurrencyConverter;
-//# sourceMappingURL=currency-converter.js.map

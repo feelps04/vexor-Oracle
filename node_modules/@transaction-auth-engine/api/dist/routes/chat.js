@@ -233,4 +233,3 @@ async function chatRoutes(app, opts) {
         return reply.code(201).send({ id: res.rows[0].id });
     });
 }
-//# sourceMappingURL=chat.js.map

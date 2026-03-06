@@ -6,11 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const promises_1 = __importDefault(require("node:fs/promises"));
 const kafkajs_1 = require("kafkajs");
 const shared_1 = require("@transaction-auth-engine/shared");
+const mmf_1 = require("./mmf");
 const TOPIC = 'stocks.ticker';
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:29092').split(',');
 const BOOK_FILE_PATH = process.env.MT5_BOOK_FILE ??
     'C:/Users/SEU_USUARIO/AppData/Roaming/MetaQuotes/Terminal/.../MQL5/Files/B3_Book_Data.bin';
 const POLL_MS = Number(process.env.MT5_POLL_MS ?? 10);
+const FORCE_PUBLISH = (process.env.FORCE_PUBLISH ?? 'false') === 'true';
+const FORCE_PUBLISH_EVERY_MS = Number(process.env.FORCE_PUBLISH_EVERY_MS ?? 1000);
 const HEADER_BYTES = Number(process.env.MT5_FILE_HEADER_BYTES ?? 0);
 const SYMBOL_BYTES = Number(process.env.MT5_SYMBOL_BYTES ?? 32);
 const HAS_DATETIME = (process.env.MT5_HAS_DATETIME ?? '1') !== '0';
@@ -18,6 +21,48 @@ const MIN_PRICE = Number(process.env.MT5_MIN_PRICE ?? 0.01);
 const SYMBOL_REGEX = new RegExp(process.env.MT5_SYMBOL_REGEX ?? '^[A-Z0-9]{4,12}$');
 const START_FROM_END = (process.env.MT5_START_FROM_END ?? '0') === '1';
 const TAIL_RECORDS = Number(process.env.MT5_TAIL_RECORDS ?? 5000);
+function parseJsonObject(raw) {
+    if (!raw)
+        return {};
+    try {
+        const v = JSON.parse(String(raw));
+        if (!v || typeof v !== 'object')
+            return {};
+        const out = {};
+        for (const [k, val] of Object.entries(v)) {
+            const kk = String(k || '').trim().toUpperCase();
+            const vv = String(val || '').trim().toUpperCase();
+            if (kk && vv)
+                out[kk] = vv;
+        }
+        return out;
+    }
+    catch {
+        return {};
+    }
+}
+const FUTURES_CURRENT_CONTRACTS = parseJsonObject(process.env.B3_FUTURES_CURRENT_CONTRACTS ?? process.env.FUTURES_CURRENT_CONTRACTS);
+function remapSymbol(symbol) {
+    const s = String(symbol || '').trim().toUpperCase();
+    if (!s)
+        return s;
+    // If the EA emits generic future roots (WIN/WDO/IND/DOL), remap to the current contract.
+    // We only remap exact roots (or root plus a single non-alphanumeric suffix) to avoid
+    // accidentally changing already-contracted symbols (e.g. WINJ26).
+    for (const [root, contract] of Object.entries(FUTURES_CURRENT_CONTRACTS)) {
+        if (!root || !contract)
+            continue;
+        if (s === root)
+            return contract;
+        if (s.startsWith(root) && s.length === root.length + 1) {
+            const suf = s.slice(root.length);
+            if (/[^A-Z0-9]/.test(suf))
+                return contract;
+        }
+    }
+    return s;
+}
+const MT5_WATCH_METHOD = (process.env.MT5_WATCH_METHOD ?? 'poll');
 const MT5_LAYOUT = (process.env.MT5_LAYOUT ?? 'full_struct');
 const PRICE_SCALE = Number(process.env.MT5_PRICE_SCALE ?? 1);
 const FORCE_SNAPSHOT_EVERY_MS = Number(process.env.MT5_FORCE_SNAPSHOT_EVERY_MS ?? (MT5_LAYOUT === 'single_i64' ? 1000 : 0));
@@ -183,15 +228,455 @@ const RECORD_BYTES_CALC = MT5_LAYOUT === 'single_i64'
             (HAS_DATETIME ? byteLen(TIME_ENCODING) : 0);
 const RECORD_BYTES = Number(process.env.MT5_RECORD_BYTES ?? process.env.MT5_SINGLE_RECORD_BYTES_DEFAULT ?? RECORD_BYTES_CALC);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const MMF_WATCHDOG_STALE_MS = Number(process.env.MMF_WATCHDOG_STALE_MS ?? 3000);
+const MMF_LATENCY_WARN_MS = Number(process.env.MMF_LATENCY_WARN_MS ?? 250);
+const MMF_OBS_LOG_MS = Number(process.env.MMF_OBS_LOG_MS ?? 5000);
+const MARKET_INGEST_URL = String(process.env.MARKET_INGEST_URL ?? '').trim();
+const MARKET_INGEST_TOKEN = String(process.env.MARKET_INGEST_TOKEN ?? '').trim();
+const MARKET_INGEST_BATCH_MAX = Math.max(1, Math.min(5000, Math.trunc(Number(process.env.MARKET_INGEST_BATCH_MAX ?? 250))));
+const MARKET_INGEST_FLUSH_MS = Math.max(1, Math.min(1000, Math.trunc(Number(process.env.MARKET_INGEST_FLUSH_MS ?? 50))));
+function envTrue(name) {
+    const v = String(process.env[name] ?? '').trim().toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+function envFalse(name) {
+    const v = String(process.env[name] ?? '').trim().toLowerCase();
+    return v === '0' || v === 'false' || v === 'no' || v === 'off';
+}
+function parseMmfConfigs() {
+    const raw = String(process.env.MMF_CONFIGS ?? '').trim();
+    if (!raw) {
+        return [];
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch {
+        throw new Error('Invalid MMF_CONFIGS (must be JSON array)');
+    }
+    if (!Array.isArray(parsed)) {
+        throw new Error('Invalid MMF_CONFIGS (must be JSON array)');
+    }
+    const out = [];
+    for (const item of parsed) {
+        const name = String(item?.name ?? '').trim();
+        if (!name)
+            continue;
+        const source = String(item?.source ?? name).trim();
+        const recordBytes = Number(item?.recordBytes ?? 128);
+        const recordCount = Number(item?.recordCount ?? 8192);
+        const bidOffset = Number(item?.bidOffset ?? 0);
+        const askOffset = Number(item?.askOffset ?? 8);
+        const volumeOffset = Number(item?.volumeOffset ?? 16);
+        const timeOffset = Number(item?.timeOffset ?? 24);
+        const hbOffset = Number(item?.hbOffset ?? 36);
+        const wfOffset = Number(item?.wfOffset ?? 40);
+        const symbolOffset = Number(item?.symbolOffset ?? 44);
+        const symbolBytes = Number(item?.symbolBytes ?? 16);
+        out.push({
+            source,
+            mmf: {
+                name,
+                recordBytes,
+                recordCount,
+                bidOffset,
+                askOffset,
+                volumeOffset,
+                timeOffset,
+                hbOffset,
+                wfOffset,
+                symbolOffset,
+                symbolBytes,
+            },
+        });
+    }
+    return out;
+}
+async function runMmfLoop(params) {
+    const { producer, logger } = params;
+    const topic = process.env.MT5_TOPIC ?? 'stocks.ticker';
+    const ingestBuf = [];
+    let ingestLastFlushMs = 0;
+    let ingestInFlight = null;
+    const flushIngest = async (now) => {
+        if (!MARKET_INGEST_URL)
+            return;
+        if (ingestBuf.length === 0)
+            return;
+        if (ingestInFlight)
+            return;
+        const items = ingestBuf.splice(0, ingestBuf.length);
+        ingestLastFlushMs = now;
+        ingestInFlight = (async () => {
+            try {
+                const headers = { 'content-type': 'application/json' };
+                if (MARKET_INGEST_TOKEN)
+                    headers['x-market-ingest-token'] = MARKET_INGEST_TOKEN;
+                const res = await fetch(MARKET_INGEST_URL, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ items }),
+                });
+                if (!res.ok) {
+                    const txt = await res.text().catch(() => '');
+                    logger.warn({ status: res.status, body: txt.slice(0, 500) }, 'Market ingest HTTP failed');
+                }
+            }
+            catch (err) {
+                logger.warn({ err }, 'Market ingest HTTP error');
+            }
+            finally {
+                ingestInFlight = null;
+            }
+        })();
+        await ingestInFlight;
+    };
+    const FORCE_PUBLISH = (process.env.FORCE_PUBLISH ?? 'false') === 'true';
+    const FORCE_PUBLISH_EVERY_MS = Number(process.env.FORCE_PUBLISH_EVERY_MS ?? 1000);
+    let stopping = false;
+    let lastForcePublishMs = 0;
+    let lastLogMs = 0;
+    let published = 0;
+    const lastSentBySymbol = new Map();
+    const watchdogState = new Map();
+    const mmfConfigs = parseMmfConfigs();
+    const multiMode = mmfConfigs.length > 0;
+    process.on('SIGINT', () => {
+        stopping = true;
+    });
+    process.on('SIGTERM', () => {
+        stopping = true;
+    });
+    logger.info({
+        mode: multiMode ? 'multi_mmf' : 'single_mmf',
+        mmfConfigs: multiMode
+            ? mmfConfigs.map((c) => ({ name: c.mmf.name, source: c.source, recordBytes: c.mmf.recordBytes, recordCount: c.mmf.recordCount }))
+            : undefined,
+        mmfName: multiMode ? undefined : (process.env.MMF_NAME ?? 'Local\\B3RAM'),
+        mmfRecordBytes: multiMode ? undefined : Number(process.env.MMF_RECORD_BYTES ?? 128),
+        mmfRecordCount: multiMode ? undefined : Number(process.env.MMF_RECORD_COUNT ?? 8192),
+        pollMs: POLL_MS,
+        watchdogStaleMs: MMF_WATCHDOG_STALE_MS,
+        latencyWarnMs: MMF_LATENCY_WARN_MS,
+        obsLogMs: MMF_OBS_LOG_MS,
+        marketIngestUrl: MARKET_INGEST_URL || undefined,
+        marketIngestBatchMax: MARKET_INGEST_URL ? MARKET_INGEST_BATCH_MAX : undefined,
+        marketIngestFlushMs: MARKET_INGEST_URL ? MARKET_INGEST_FLUSH_MS : undefined,
+    }, 'Starting MMF-based MT5 stock price producer');
+    const publishRecords = (records, source, mmfName, now) => {
+        const messages = [];
+        const ingest = [];
+        const src = String(source || '').trim() || 'unknown';
+        const stKey = src;
+        let st = watchdogState.get(stKey);
+        if (!st) {
+            st = {
+                mmfName,
+                lastHb: undefined,
+                lastHbChangeMs: now,
+                lastDataMs: now,
+                lastLatencyMaxMs: 0,
+                emaLatencyMs: 0,
+                emaAlpha: 0.2,
+                lastObsLogMs: 0,
+                ticksSinceObs: 0,
+            };
+            watchdogState.set(stKey, st);
+        }
+        else {
+            st.mmfName = mmfName ?? st.mmfName;
+        }
+        let maxHbInBatch;
+        let batchLatencyMax = 0;
+        for (const rec of records) {
+            const mid = (rec.bid + rec.ask) / 2;
+            if (!Number.isFinite(mid) || mid <= 0)
+                continue;
+            const stateKey = `${src}:${rec.symbol}`;
+            const prev = lastSentBySymbol.get(stateKey);
+            if (prev &&
+                prev.bid === rec.bid &&
+                prev.ask === rec.ask &&
+                prev.volume === rec.volume &&
+                prev.ts === rec.ts) {
+                continue;
+            }
+            lastSentBySymbol.set(stateKey, rec);
+            const ts = Number.isFinite(rec.ts) && rec.ts > 0 ? rec.ts : now;
+            if (Number.isFinite(rec.hb)) {
+                const hb = rec.hb;
+                if (maxHbInBatch == null || hb > maxHbInBatch)
+                    maxHbInBatch = hb;
+            }
+            if (Number.isFinite(ts) && ts > 0) {
+                const latencyMs = Math.max(0, now - ts);
+                if (latencyMs > batchLatencyMax)
+                    batchLatencyMax = latencyMs;
+                st.ticksSinceObs += 1;
+                st.lastLatencyMaxMs = Math.max(st.lastLatencyMaxMs, latencyMs);
+                st.emaLatencyMs = st.emaLatencyMs === 0 ? latencyMs : st.emaLatencyMs * (1 - st.emaAlpha) + latencyMs * st.emaAlpha;
+                if (MMF_LATENCY_WARN_MS > 0 && latencyMs >= MMF_LATENCY_WARN_MS) {
+                    logger.warn({ source: src, symbol: rec.symbol, latencyMs, ts, now, mmfName }, 'High tick latency detected');
+                }
+            }
+            const payload = JSON.stringify({
+                type: 'tick',
+                source: src,
+                symbol: rec.symbol,
+                priceBRL: mid,
+                bid: rec.bid,
+                ask: rec.ask,
+                volume: rec.volume,
+                timestamp: new Date(ts).toISOString(),
+                ts,
+            });
+            messages.push({ key: rec.symbol, value: payload });
+            ingest.push({ symbol: rec.symbol, priceBRL: mid, bid: rec.bid, ask: rec.ask, ts, source: src });
+        }
+        if (records.length > 0) {
+            st.lastDataMs = now;
+        }
+        if (maxHbInBatch != null) {
+            if (st.lastHb == null) {
+                st.lastHb = maxHbInBatch;
+                st.lastHbChangeMs = now;
+            }
+            else if (maxHbInBatch !== st.lastHb) {
+                st.lastHb = maxHbInBatch;
+                st.lastHbChangeMs = now;
+            }
+        }
+        st.lastObsLogMs = st.lastObsLogMs || now;
+        if (MMF_OBS_LOG_MS > 0 && now - st.lastObsLogMs >= MMF_OBS_LOG_MS) {
+            logger.info({
+                source: src,
+                mmfName: st.mmfName,
+                ticks: st.ticksSinceObs,
+                emaLatencyMs: Number(st.emaLatencyMs.toFixed(1)),
+                latencyMaxMs: st.lastLatencyMaxMs,
+                hb: st.lastHb,
+            }, 'MMF latency/health');
+            st.lastObsLogMs = now;
+            st.ticksSinceObs = 0;
+            st.lastLatencyMaxMs = 0;
+        }
+        return { messages, ingest };
+    };
+    const buildForcePublish = (nowForcePub) => {
+        const forceMessages = [];
+        const ingest = [];
+        for (const [stateKey, rec] of lastSentBySymbol.entries()) {
+            const mid = (rec.bid + rec.ask) / 2;
+            if (!Number.isFinite(mid) || mid <= 0)
+                continue;
+            const src = stateKey.split(':', 1)[0] || 'unknown';
+            const ts = Number.isFinite(rec.ts) && rec.ts > 0 ? rec.ts : nowForcePub;
+            const payload = JSON.stringify({
+                type: 'tick',
+                source: src,
+                symbol: rec.symbol,
+                priceBRL: mid,
+                bid: rec.bid,
+                ask: rec.ask,
+                volume: rec.volume,
+                timestamp: new Date(ts).toISOString(),
+                ts,
+            });
+            forceMessages.push({ key: rec.symbol, value: payload });
+            ingest.push({ symbol: rec.symbol, priceBRL: mid, bid: rec.bid, ask: rec.ask, ts, source: src });
+        }
+        return { messages: forceMessages, ingest };
+    };
+    if (!multiMode) {
+        while (!stopping) {
+            let mmf = null;
+            try {
+                mmf = (0, mmf_1.openMmf)();
+            }
+            catch (err) {
+                const backoff = 1000;
+                logger.warn({ err }, 'Failed to open MMF; retrying');
+                await sleep(backoff);
+                continue;
+            }
+            try {
+                while (!stopping) {
+                    const now = Date.now();
+                    const records = (0, mmf_1.readAllRecords)(mmf.view);
+                    const src = process.env.MMF_SOURCE ?? 'genial';
+                    const mmfName = process.env.MMF_NAME ?? 'Local\\B3RAM';
+                    const pub = publishRecords(records, src, mmfName, now);
+                    const st = watchdogState.get(String(src || '').trim() || 'unknown');
+                    if (st && MMF_WATCHDOG_STALE_MS > 0) {
+                        const staleHb = now - st.lastHbChangeMs >= MMF_WATCHDOG_STALE_MS;
+                        const staleData = now - st.lastDataMs >= MMF_WATCHDOG_STALE_MS;
+                        if (staleHb && staleData) {
+                            logger.warn({ source: src, mmfName, staleMs: MMF_WATCHDOG_STALE_MS, lastHb: st.lastHb, lastHbChangeMs: st.lastHbChangeMs, lastDataMs: st.lastDataMs }, 'MMF watchdog stale; reopening MMF');
+                            throw new Error('MMF watchdog stale');
+                        }
+                    }
+                    if (MARKET_INGEST_URL && pub.ingest.length > 0) {
+                        ingestBuf.push(...pub.ingest);
+                        if (ingestBuf.length >= MARKET_INGEST_BATCH_MAX || now - ingestLastFlushMs >= MARKET_INGEST_FLUSH_MS) {
+                            await flushIngest(now);
+                        }
+                    }
+                    if (pub.messages.length > 0) {
+                        await producer.send({ topic, messages: pub.messages });
+                        published += pub.messages.length;
+                    }
+                    if (FORCE_PUBLISH && lastSentBySymbol.size > 0 && FORCE_PUBLISH_EVERY_MS > 0) {
+                        const nowForcePub = Date.now();
+                        if (nowForcePub - lastForcePublishMs >= FORCE_PUBLISH_EVERY_MS) {
+                            lastForcePublishMs = nowForcePub;
+                            const forcePub = buildForcePublish(nowForcePub);
+                            if (MARKET_INGEST_URL && forcePub.ingest.length > 0) {
+                                ingestBuf.push(...forcePub.ingest);
+                                await flushIngest(nowForcePub);
+                            }
+                            if (forcePub.messages.length > 0) {
+                                await producer.send({ topic, messages: forcePub.messages });
+                                published += forcePub.messages.length;
+                            }
+                        }
+                    }
+                    const nowLog = Date.now();
+                    if (nowLog - lastLogMs > 5000) {
+                        lastLogMs = nowLog;
+                        logger.info({ published, symbols: lastSentBySymbol.size }, 'MMF MT5 producer idle or steady state');
+                    }
+                    await sleep(POLL_MS);
+                }
+            }
+            catch (err) {
+                logger.warn({ err }, 'Error reading from MMF; reopening');
+            }
+            finally {
+                (0, mmf_1.closeMmf)(mmf);
+            }
+        }
+        return;
+    }
+    while (!stopping) {
+        const mmfViews = [];
+        try {
+            for (const cfg of mmfConfigs) {
+                mmfViews.push({ cfg, view: (0, mmf_1.openMmfWithConfig)(cfg.mmf) });
+            }
+        }
+        catch (err) {
+            for (const v of mmfViews)
+                (0, mmf_1.closeMmf)(v.view);
+            const backoff = 1000;
+            logger.warn({ err }, 'Failed to open one or more MMFs; retrying');
+            await sleep(backoff);
+            continue;
+        }
+        try {
+            while (!stopping) {
+                const now = Date.now();
+                const messages = [];
+                const ingestTicks = [];
+                for (const v of mmfViews) {
+                    const records = (0, mmf_1.readAllRecordsWithConfig)(v.view.view, v.cfg.mmf);
+                    const pub = publishRecords(records, v.cfg.source, v.cfg.mmf.name, now);
+                    messages.push(...pub.messages);
+                    ingestTicks.push(...pub.ingest);
+                    const st = watchdogState.get(String(v.cfg.source || '').trim() || 'unknown');
+                    if (st && MMF_WATCHDOG_STALE_MS > 0) {
+                        const staleHb = now - st.lastHbChangeMs >= MMF_WATCHDOG_STALE_MS;
+                        const staleData = now - st.lastDataMs >= MMF_WATCHDOG_STALE_MS;
+                        if (staleHb && staleData) {
+                            logger.warn({
+                                source: v.cfg.source,
+                                mmfName: v.cfg.mmf.name,
+                                staleMs: MMF_WATCHDOG_STALE_MS,
+                                lastHb: st.lastHb,
+                                lastHbChangeMs: st.lastHbChangeMs,
+                                lastDataMs: st.lastDataMs,
+                            }, 'MMF watchdog stale; reopening MMFs');
+                            throw new Error('MMF watchdog stale');
+                        }
+                    }
+                }
+                if (MARKET_INGEST_URL && ingestTicks.length > 0) {
+                    ingestBuf.push(...ingestTicks);
+                    if (ingestBuf.length >= MARKET_INGEST_BATCH_MAX || now - ingestLastFlushMs >= MARKET_INGEST_FLUSH_MS) {
+                        await flushIngest(now);
+                    }
+                }
+                if (messages.length > 0) {
+                    await producer.send({ topic, messages });
+                    published += messages.length;
+                }
+                if (FORCE_PUBLISH && lastSentBySymbol.size > 0 && FORCE_PUBLISH_EVERY_MS > 0) {
+                    const nowForcePub = Date.now();
+                    if (nowForcePub - lastForcePublishMs >= FORCE_PUBLISH_EVERY_MS) {
+                        lastForcePublishMs = nowForcePub;
+                        const forcePub = buildForcePublish(nowForcePub);
+                        if (MARKET_INGEST_URL && forcePub.ingest.length > 0) {
+                            ingestBuf.push(...forcePub.ingest);
+                            await flushIngest(nowForcePub);
+                        }
+                        if (forcePub.messages.length > 0) {
+                            await producer.send({ topic, messages: forcePub.messages });
+                            published += forcePub.messages.length;
+                        }
+                    }
+                }
+                const nowLog = Date.now();
+                if (nowLog - lastLogMs > 5000) {
+                    lastLogMs = nowLog;
+                    logger.info({ published, symbols: lastSentBySymbol.size }, 'MMF MT5 producer idle or steady state');
+                }
+                await sleep(POLL_MS);
+            }
+        }
+        catch (err) {
+            logger.warn({ err }, 'Error reading from MMFs; reopening');
+        }
+        finally {
+            await flushIngest(Date.now());
+            for (const v of mmfViews)
+                (0, mmf_1.closeMmf)(v.view);
+        }
+    }
+}
 function isRetryableFsError(err) {
     const code = err?.code;
     return code === 'EACCES' || code === 'EPERM' || code === 'EBUSY' || code === 'ENOENT';
 }
 async function main() {
     const logger = (0, shared_1.createLogger)('stock-price-producer');
-    const kafka = new kafkajs_1.Kafka({ clientId: 'stock-price-producer', brokers: KAFKA_BROKERS });
-    const producer = kafka.producer();
-    await producer.connect();
+    const marketIngestUrlEnv = String(process.env.MARKET_INGEST_URL ?? '').trim();
+    const kafkaDisabled = envTrue('KAFKA_DISABLED') ||
+        envTrue('DISABLE_KAFKA') ||
+        envTrue('SKIP_KAFKA') ||
+        envFalse('USE_KAFKA') ||
+        Boolean(marketIngestUrlEnv);
+    const producer = kafkaDisabled
+        ? {
+            async connect() {
+                return;
+            },
+            async disconnect() {
+                return;
+            },
+            async send() {
+                return [];
+            },
+            async sendBatch() {
+                return [];
+            },
+        }
+        : (() => {
+            const kafka = new kafkajs_1.Kafka({ clientId: 'stock-price-producer', brokers: KAFKA_BROKERS });
+            return kafka.producer();
+        })();
+    if (!kafkaDisabled && producer.connect) {
+        await producer.connect();
+    }
     let stopping = false;
     const shutdown = async () => {
         if (stopping)
@@ -210,7 +695,11 @@ async function main() {
     process.on('SIGTERM', shutdown);
     logger.info({
         bookFile: BOOK_FILE_PATH,
+        watchMethod: MT5_WATCH_METHOD,
         pollMs: POLL_MS,
+        forceSnapshotEveryMs: FORCE_SNAPSHOT_EVERY_MS,
+        forcePublish: FORCE_PUBLISH,
+        forcePublishEveryMs: FORCE_PUBLISH_EVERY_MS,
         headerBytes: HEADER_BYTES,
         recordBytes: RECORD_BYTES,
         recordBytesCalc: RECORD_BYTES_CALC,
@@ -223,6 +712,7 @@ async function main() {
         volumeEncoding: VOLUME_ENCODING,
         layout: MT5_LAYOUT,
         priceScale: PRICE_SCALE,
+        futuresCurrentContracts: FUTURES_CURRENT_CONTRACTS,
     }, 'MT5 book-file stock price producer started');
     let offset = HEADER_BYTES;
     let initializedOffset = false;
@@ -231,9 +721,50 @@ async function main() {
     let lastLogMs = 0;
     let lastMtimeMs = 0;
     let lastForcedSnapshotMs = 0;
+    let lastForcePublishMs = 0;
     let lastInvalidWarnMs = 0;
     const lastSentBySymbol = new Map();
+    const ingestBuf = [];
+    let ingestLastFlushMs = 0;
+    let ingestInFlight = null;
+    const flushIngest = async (now) => {
+        if (!MARKET_INGEST_URL)
+            return;
+        if (ingestBuf.length === 0)
+            return;
+        if (ingestInFlight)
+            return;
+        const items = ingestBuf.splice(0, ingestBuf.length);
+        ingestLastFlushMs = now;
+        ingestInFlight = (async () => {
+            try {
+                const headers = { 'content-type': 'application/json' };
+                if (MARKET_INGEST_TOKEN)
+                    headers['x-market-ingest-token'] = MARKET_INGEST_TOKEN;
+                const res = await fetch(MARKET_INGEST_URL, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ items }),
+                });
+                if (!res.ok) {
+                    const txt = await res.text().catch(() => '');
+                    logger.warn({ status: res.status, body: txt.slice(0, 500) }, 'Market ingest HTTP failed');
+                }
+            }
+            catch (err) {
+                logger.warn({ err }, 'Market ingest HTTP error');
+            }
+            finally {
+                ingestInFlight = null;
+            }
+        })();
+        await ingestInFlight;
+    };
     while (!stopping) {
+        if (MT5_WATCH_METHOD === 'mmf') {
+            await runMmfLoop({ producer, logger });
+            break;
+        }
         try {
             const st = await promises_1.default.stat(BOOK_FILE_PATH);
             const size = st.size;
@@ -274,6 +805,59 @@ async function main() {
             const readable = available - (available % RECORD_BYTES);
             if (readable <= 0) {
                 consecutiveErrors = 0;
+                if (FORCE_PUBLISH && lastSentBySymbol.size > 0 && FORCE_PUBLISH_EVERY_MS > 0) {
+                    const nowForcePub = Date.now();
+                    if (nowForcePub - lastForcePublishMs >= FORCE_PUBLISH_EVERY_MS) {
+                        lastForcePublishMs = nowForcePub;
+                        const now = new Date();
+                        const nowMs = now.getTime();
+                        const messages = [];
+                        for (const [symbol, rec] of lastSentBySymbol.entries()) {
+                            const mid = (rec.bid + rec.ask) / 2;
+                            if (!Number.isFinite(mid) || mid <= 0)
+                                continue;
+                            const payload = JSON.stringify({
+                                type: 'tick',
+                                symbol,
+                                priceBRL: mid,
+                                bid: rec.bid,
+                                ask: rec.ask,
+                                volume: rec.volume,
+                                timestamp: now.toISOString(),
+                                ts: nowMs,
+                            });
+                            messages.push({ key: symbol, value: payload });
+                        }
+                        if (messages.length > 0) {
+                            await producer.send({ topic: TOPIC, messages });
+                            published += messages.length;
+                        }
+                        if (MARKET_INGEST_URL && messages.length > 0) {
+                            const src = String(process.env.MMF_SOURCE ?? process.env.MARKET_SOURCE ?? 'genial').trim() || 'genial';
+                            const nowMs = now.getTime();
+                            for (const m of messages) {
+                                try {
+                                    const p = JSON.parse(String(m.value || ''));
+                                    if (!p?.symbol || !Number.isFinite(Number(p?.priceBRL)))
+                                        continue;
+                                    ingestBuf.push({
+                                        symbol: String(p.symbol),
+                                        priceBRL: Number(p.priceBRL),
+                                        bid: Number(p.bid),
+                                        ask: Number(p.ask),
+                                        ts: Number(p.ts) || nowMs,
+                                        source: String(p.source ?? src),
+                                    });
+                                }
+                                catch {
+                                }
+                            }
+                            if (ingestBuf.length >= MARKET_INGEST_BATCH_MAX || Date.now() - ingestLastFlushMs >= MARKET_INGEST_FLUSH_MS) {
+                                await flushIngest(Date.now());
+                            }
+                        }
+                    }
+                }
                 const nowMs = Date.now();
                 if (nowMs - lastLogMs > 5000) {
                     lastLogMs = nowMs;
@@ -300,6 +884,7 @@ async function main() {
                     const rec = parseRecord(buf, i);
                     if (!rec)
                         continue;
+                    const symbol = remapSymbol(rec.symbol);
                     if (!isPlausibleQuote(rec)) {
                         const nowWarn = Date.now();
                         if (invalidLogged < 3 && nowWarn - lastInvalidWarnMs > 2000) {
@@ -327,7 +912,7 @@ async function main() {
                         recTs = recTs * 1000;
                     if (!Number.isFinite(recTs) || recTs <= 0)
                         recTs = nowMs;
-                    const prev = lastSentBySymbol.get(rec.symbol);
+                    const prev = lastSentBySymbol.get(symbol);
                     if (prev &&
                         prev.bid === rec.bid &&
                         prev.ask === rec.ask &&
@@ -335,7 +920,7 @@ async function main() {
                         prev.datetime === rec.datetime) {
                         continue;
                     }
-                    lastSentBySymbol.set(rec.symbol, {
+                    lastSentBySymbol.set(symbol, {
                         bid: rec.bid,
                         ask: rec.ask,
                         volume: rec.volume,
@@ -343,7 +928,7 @@ async function main() {
                     });
                     const payload = JSON.stringify({
                         type: 'tick',
-                        symbol: rec.symbol,
+                        symbol,
                         priceBRL: mid,
                         bid: rec.bid,
                         ask: rec.ask,
@@ -351,7 +936,7 @@ async function main() {
                         timestamp: now.toISOString(),
                         ts: recTs,
                     });
-                    messages.push({ key: rec.symbol, value: payload });
+                    messages.push({ key: symbol, value: payload });
                     published += 1;
                     batchPublished += 1;
                 }
@@ -360,6 +945,29 @@ async function main() {
                         topic: TOPIC,
                         messages,
                     });
+                }
+                if (MARKET_INGEST_URL && messages.length > 0) {
+                    const src = String(process.env.MMF_SOURCE ?? process.env.MARKET_SOURCE ?? 'genial').trim() || 'genial';
+                    for (const m of messages) {
+                        try {
+                            const p = JSON.parse(String(m.value || ''));
+                            if (!p?.symbol || !Number.isFinite(Number(p?.priceBRL)))
+                                continue;
+                            ingestBuf.push({
+                                symbol: String(p.symbol),
+                                priceBRL: Number(p.priceBRL),
+                                bid: Number(p.bid),
+                                ask: Number(p.ask),
+                                ts: Number(p.ts) || nowMs,
+                                source: String(p.source ?? src),
+                            });
+                        }
+                        catch {
+                        }
+                    }
+                    if (ingestBuf.length >= MARKET_INGEST_BATCH_MAX || Date.now() - ingestLastFlushMs >= MARKET_INGEST_FLUSH_MS) {
+                        await flushIngest(Date.now());
+                    }
                 }
                 offset += bytesRead;
                 consecutiveErrors = 0;
@@ -386,6 +994,7 @@ async function main() {
             await sleep(retryable ? backoff : 1000);
         }
     }
+    await flushIngest(Date.now());
     // no-op (kept for symmetry with other services)
 }
 main().catch((err) => {

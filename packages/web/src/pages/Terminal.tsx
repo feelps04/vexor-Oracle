@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { apiGet } from '../lib/api'
 import { getAuth } from '../lib/auth'
 import { Link, NavLink, useNavigate, Outlet, useMatch } from 'react-router-dom'
+import { useGeckos, FeedMessage } from '../hooks/useGeckos'
 
 // Types
 type AssetItem = {
@@ -12,12 +13,38 @@ type AssetItem = {
   sparkline: number[]
 }
 
+type AssetSource = {
+  bySource: Map<string, number>
+}
+
 type SymbolCheckItem = {
   requested: string
   symbol: string
   status: 'ok' | 'no_data' | 'redis_not_configured'
   priceBRL?: number
   message?: string
+}
+
+type SectorItem = {
+  sectorId: string
+  sectorName: string
+  symbols: number
+  description: string
+  active: boolean
+  source: string
+  protocol: string
+  frequency: string
+  recommendation: string
+}
+
+type SectorsResponse = {
+  sectors: SectorItem[]
+}
+
+type SectorSymbolsResponse = {
+  sectorId: string
+  total: number
+  symbols: Array<{ exchange: string; symbol: string; fullSymbol: string; description: string; type: string }>
 }
 
 type ChatMessage = {
@@ -27,6 +54,311 @@ type ChatMessage = {
   message: string
   time: string
   online?: boolean
+}
+
+// VEXOR_CHAT Widget Component
+function VexorChatWidget({ accountId }: { accountId: string }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { id: '1', user: 'VEXOR_CORE', avatar: 'V', message: 'Análise de sentimentos completa: O setor de TECNOLOGIA apresenta padrões de acumulação institucional.\n\nSTATUS: PRONTO PARA EXECUÇÃO', time: '14:25:01', online: true },
+    { id: '2', user: 'SQUAD_TRADERS', avatar: 'S', message: 'Entrada detectada no ativo PETR4. Volume acima da média.', time: '14:24:32', online: true },
+  ])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  
+  // Generate Atlas name from accountId
+  const atlasName = useMemo(() => {
+    const prefix = accountId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'ATLAS'
+    const names = ['NEXUS', 'ORION', 'ATLAS', 'CIPHER', 'QUANTUM', 'VECTOR', 'PRISM', 'NOVA', 'ZENITH', 'APEX']
+    const num = parseInt(accountId.slice(-4), 16) % names.length
+    return `${names[num]}_${prefix}`
+  }, [accountId])
+  
+  const handleSend = async () => {
+    if (!input.trim()) return
+    const newMsg: ChatMessage = {
+      id: Date.now().toString(),
+      user: atlasName,
+      avatar: atlasName[0],
+      message: input,
+      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      online: true
+    }
+    setMessages(prev => [...prev, newMsg])
+    setInput('')
+    
+    // Simulate AI response
+    setLoading(true)
+    setTimeout(() => {
+      const aiResponse: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        user: 'VEXOR_CORE',
+        avatar: 'V',
+        message: 'Comando recebido. Processando análise...',
+        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        online: true
+      }
+      setMessages(prev => [...prev, aiResponse])
+      setLoading(false)
+    }, 1500)
+  }
+  
+  return (
+    <div className="vexor-chat-widget">
+      <div className="chat-header">
+        <span className="chat-title">VEXOR_CHAT</span>
+        <span className="chat-encrypted">ENCRYPTED</span>
+      </div>
+      
+      <div className="chat-channels">
+        <div className="channel active">
+          <span className="channel-icon">👥</span>
+          <span className="channel-name">SQUAD_TRADERS</span>
+        </div>
+        <div className="channel">
+          <span className="channel-icon">🤖</span>
+          <span className="channel-name">VEXOR_CORE</span>
+          <span className="channel-badge">AI</span>
+        </div>
+      </div>
+      
+      <div className="chat-messages">
+        {messages.map(msg => (
+          <div key={msg.id} className={`chat-message ${msg.user === atlasName ? 'own' : ''}`}>
+            <div className="msg-avatar" style={{ background: msg.user === 'VEXOR_CORE' ? 'linear-gradient(135deg, #667eea, #764ba2)' : 'linear-gradient(135deg, #0095f6, #00c6ff)' }}>
+              {msg.avatar}
+            </div>
+            <div className="msg-content">
+              <div className="msg-header">
+                <span className="msg-user">{msg.user}</span>
+                {msg.user === 'VEXOR_CORE' && <span className="ai-badge">AI</span>}
+                <span className="msg-time">{msg.time}</span>
+              </div>
+              <div className="msg-text">{msg.message}</div>
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="chat-message">
+            <div className="msg-avatar" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>V</div>
+            <div className="msg-content">
+              <div className="msg-typing">digitando...</div>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      <div className="chat-input-area">
+        <input
+          type="text"
+          className="chat-input"
+          placeholder="ESTABELECER COMANDO..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyPress={e => e.key === 'Enter' && handleSend()}
+        />
+        <button className="chat-send" onClick={handleSend}>➤</button>
+      </div>
+      
+      <style>{`
+        .vexor-chat-widget {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          background: rgba(13, 17, 23, 0.95);
+        }
+        
+        .chat-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px;
+          border-bottom: 1px solid rgba(48, 54, 61, 0.6);
+        }
+        
+        .chat-title {
+          font-weight: 700;
+          font-size: 14px;
+          color: #00ffc8;
+          letter-spacing: 1px;
+        }
+        
+        .chat-encrypted {
+          font-size: 10px;
+          color: #3fb950;
+          background: rgba(63, 185, 80, 0.1);
+          padding: 4px 8px;
+          border-radius: 4px;
+          border: 1px solid rgba(63, 185, 80, 0.3);
+        }
+        
+        .chat-channels {
+          display: flex;
+          gap: 8px;
+          padding: 12px;
+          border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+        }
+        
+        .channel {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 12px;
+          background: rgba(48, 54, 61, 0.3);
+          border-radius: 20px;
+          cursor: pointer;
+          font-size: 12px;
+          color: #8b949e;
+          transition: all 0.2s;
+        }
+        
+        .channel:hover, .channel.active {
+          background: rgba(88, 166, 255, 0.2);
+          color: #e6edf3;
+        }
+        
+        .channel-badge {
+          background: linear-gradient(135deg, #667eea, #764ba2);
+          color: white;
+          font-size: 9px;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-weight: 600;
+        }
+        
+        .chat-messages {
+          flex: 1;
+          overflow-y: auto;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        
+        .chat-message {
+          display: flex;
+          gap: 10px;
+        }
+        
+        .chat-message.own {
+          flex-direction: row-reverse;
+        }
+        
+        .msg-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 600;
+          font-size: 14px;
+          color: white;
+          flex-shrink: 0;
+        }
+        
+        .msg-content {
+          flex: 1;
+          max-width: 85%;
+        }
+        
+        .msg-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 4px;
+        }
+        
+        .msg-user {
+          font-weight: 600;
+          font-size: 13px;
+          color: #e6edf3;
+        }
+        
+        .ai-badge {
+          background: linear-gradient(135deg, #667eea, #764ba2);
+          color: white;
+          font-size: 9px;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-weight: 600;
+        }
+        
+        .msg-time {
+          font-size: 10px;
+          color: #6e7681;
+        }
+        
+        .msg-text {
+          font-size: 13px;
+          color: #c9d1d9;
+          line-height: 1.5;
+          white-space: pre-wrap;
+          background: rgba(48, 54, 61, 0.3);
+          padding: 10px 14px;
+          border-radius: 16px;
+          border-top-left-radius: 4px;
+        }
+        
+        .chat-message.own .msg-text {
+          background: rgba(88, 166, 255, 0.2);
+          border-top-left-radius: 16px;
+          border-top-right-radius: 4px;
+        }
+        
+        .msg-typing {
+          font-size: 12px;
+          color: #6e7681;
+          font-style: italic;
+        }
+        
+        .chat-input-area {
+          display: flex;
+          gap: 8px;
+          padding: 12px;
+          border-top: 1px solid rgba(48, 54, 61, 0.6);
+        }
+        
+        .chat-input {
+          flex: 1;
+          background: rgba(48, 54, 61, 0.3);
+          border: 1px solid rgba(48, 54, 61, 0.6);
+          border-radius: 20px;
+          padding: 10px 16px;
+          color: #e6edf3;
+          font-size: 13px;
+          outline: none;
+          transition: all 0.2s;
+        }
+        
+        .chat-input:focus {
+          border-color: rgba(88, 166, 255, 0.5);
+          box-shadow: 0 0 20px rgba(88, 166, 255, 0.2);
+        }
+        
+        .chat-input::placeholder {
+          color: #6e7681;
+        }
+        
+        .chat-send {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #0095f6, #00c6ff);
+          border: none;
+          color: white;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.2s;
+        }
+        
+        .chat-send:hover {
+          transform: scale(1.1);
+        }
+      `}</style>
+    </div>
+  )
 }
 
 // Sparkline Component
@@ -57,8 +389,9 @@ function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
 export default function TerminalLayout() {
   const auth = getAuth()
   const navigate = useNavigate()
-  const groupMatch = useMatch('/app/groups/:group')
-  const groupFromRoute = String(groupMatch?.params?.group || '').toUpperCase()
+  const MAX_WS_SYMBOLS = 50000
+  const MAX_GROUP_SYMBOLS = 1500
+  const effectRunCountRef = useRef(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [selectedAsset, setSelectedAsset] = useState('VALE3')
   const [assets, setAssets] = useState<AssetItem[]>([])
@@ -66,11 +399,16 @@ export default function TerminalLayout() {
   const [feedStale, setFeedStale] = useState<boolean>(false)
   const [feedAgeMs, setFeedAgeMs] = useState<number | null>(null)
 
+  const [sectors, setSectors] = useState<SectorItem[]>([])
+  const [loadingSectors, setLoadingSectors] = useState(true)
+  const [selectedSectorId, setSelectedSectorId] = useState<string>('__ALL__')
+
   const lastClientTickAtRef = useRef<number>(0)
 
   const wsRef = useRef<WebSocket | null>(null)
   const pendingSymbolsRef = useRef<string>('')
   const pricesRef = useRef<Map<string, number>>(new Map())
+  const sourcesRef = useRef<Map<string, AssetSource>>(new Map())
   const prevPricesRef = useRef<Map<string, number>>(new Map())
   const flashRef = useRef<Map<string, 'up' | 'down'>>(new Map())
   const [flashKey, setFlashKey] = useState(0)
@@ -83,6 +421,14 @@ export default function TerminalLayout() {
   const flashMap = useMemo(() => new Map(flashRef.current), [flashKey])
 
   const accountId = useMemo(() => auth?.accountId || 'acc-1', [auth])
+  
+  // Generate Atlas name from accountId
+  const atlasName = useMemo(() => {
+    const prefix = accountId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'ATLAS'
+    const names = ['NEXUS', 'ORION', 'ATLAS', 'CIPHER', 'QUANTUM', 'VECTOR', 'PRISM', 'NOVA', 'ZENITH', 'APEX']
+    const num = parseInt(accountId.slice(-4), 16) % names.length
+    return `${names[num]}_${prefix}`
+  }, [accountId])
 
   // Auth check
   useEffect(() => {
@@ -91,6 +437,47 @@ export default function TerminalLayout() {
     }
   }, [auth, navigate])
 
+  useEffect(() => {
+    let cancelled = false
+    async function loadSectors() {
+      setLoadingSectors(true)
+      try {
+        // Fetch from Python API via proxy
+        const res = await fetch('/python-api/sectors')
+        const data = await res.json()
+        const list = Array.isArray(data?.sectors) ? data.sectors.map((s: any) => ({
+          sectorId: s.sector_id,
+          sectorName: s.sector_name,
+          symbols: s.count || 0,
+          description: '',
+          active: true,
+          source: s.exchanges?.[0] || '',
+          protocol: '',
+          frequency: '',
+          recommendation: ''
+        })) : []
+        if (cancelled) return
+        setSectors(list)
+        setSelectedSectorId((prev) => {
+          const cur = String(prev || '').trim()
+          if (cur) return cur
+          const first = list[0]?.sectorId
+          return first ? String(first) : '__ALL__'
+        })
+      } catch {
+        if (cancelled) return
+        setSectors([])
+      } finally {
+        if (cancelled) return
+        setLoadingSectors(false)
+      }
+    }
+    void loadSectors()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Load asset universe once from backend
   useEffect(() => {
     let cancelled = false
@@ -98,15 +485,21 @@ export default function TerminalLayout() {
       try {
         let symbols: string[] = []
 
-        if (groupFromRoute) {
-          const res = await apiGet<{ group: string; total: number; symbols: string[] }>(
-            `/api/v1/market/groups/${encodeURIComponent(groupFromRoute)}/symbols?limit=200`
-          )
-          symbols = (res.symbols || []).filter(Boolean).slice(0, 200)
-        } else {
-          const stocksRes = await apiGet<{ symbols: string[] }>('/api/v1/stocks')
-          const allSymbols = (stocksRes.symbols || []).filter(Boolean)
-          symbols = allSymbols.slice(0, 60)
+        const sectorId = String(selectedSectorId || '').trim()
+        if (sectorId === '__ALL__') {
+          // Fetch all symbols from Python API via proxy
+          const res = await fetch('/python-api/symbols')
+          const data = await res.json()
+          const allSymbols = Array.isArray(data?.symbols) ? data.symbols.map((s: any) => s.symbol || s) : []
+          symbols = allSymbols.map((s: string) => String(s || '').trim().toUpperCase()).filter(Boolean)
+        } else if (sectorId) {
+          // Fetch symbols for specific sector from Python API via proxy
+          const res = await fetch(`/python-api/sectors/${encodeURIComponent(sectorId)}/symbols`)
+          const data = await res.json()
+          const list = Array.isArray(data?.symbols) ? data.symbols : []
+          symbols = list
+            .map((x: any) => String(x?.symbol || '').trim().toUpperCase())
+            .filter(Boolean)
         }
         
         const assetItems: AssetItem[] = symbols.map((symbol) => ({
@@ -179,8 +572,9 @@ export default function TerminalLayout() {
         }
 
         try {
+          const checkSymbols = symbols.slice(0, 200)
           const q = await apiGet<{ items: SymbolCheckItem[] }>(
-            `/api/v1/market/symbols/check?symbols=${encodeURIComponent(symbols.join(','))}`
+            `/api/v1/market/symbols/check?symbols=${encodeURIComponent(checkSymbols.join(','))}`
           )
           const items = Array.isArray(q?.items) ? q.items : []
           if (cancelled) return
@@ -212,7 +606,7 @@ export default function TerminalLayout() {
     return () => {
       cancelled = true
     }
-  }, [groupFromRoute])
+  }, [selectedSectorId])
 
   const watchSymbols = useMemo(() => {
     const base = ['VALE3', 'PETR4', 'USDB11', 'BTCBRL']
@@ -222,20 +616,59 @@ export default function TerminalLayout() {
   }, [selectedAsset])
 
   const watchSymbolsKey = useMemo(() => watchSymbols.join(','), [watchSymbols])
-  const assetSymbolsKey = useMemo(() => assets.map((a) => a.symbol).join(','), [assets])
 
   const subscribedSymbols = useMemo(() => {
     const watchList = watchSymbolsKey
       .split(',')
       .map((x) => String(x || '').trim().toUpperCase())
       .filter(Boolean)
-    const assetList = assetSymbolsKey
-      .split(',')
-      .map((x) => String(x || '').trim().toUpperCase())
+    const assetList = assets
+      .map((a) => String(a?.symbol || '').trim().toUpperCase())
       .filter(Boolean)
     const s = new Set([...watchList, ...assetList])
-    return Array.from(s).slice(0, 200)
-  }, [assetSymbolsKey, watchSymbolsKey])
+    return Array.from(s).slice(0, MAX_WS_SYMBOLS)
+  }, [assets, watchSymbolsKey])
+
+  // Geckos.io real-time connection (replaces WebSocket)
+  const handleGeckosMessage = useCallback((msg: FeedMessage) => {
+    if (msg.type === 'tick' && msg.symbol) {
+      const sym = msg.symbol.toUpperCase()
+      const price = Number((msg as any).ask) || Number((msg as any).priceBRL) || Number((msg as any).bid)
+      if (Number.isFinite(price) && price > 0) {
+        pricesRef.current.set(sym, price)
+        dirtySymbolsRef.current.add(sym)
+        lastClientTickAtRef.current = Date.now()
+        setFeedStale(false)
+        setFeedAgeMs(0)
+      }
+    } else if (msg.type === 'ticks' && msg.items) {
+      for (const [sym, tick] of Object.entries(msg.items)) {
+        const price = Number((tick as any).ask) || Number((tick as any).priceBRL) || Number((tick as any).bid)
+        if (Number.isFinite(price) && price > 0) {
+          pricesRef.current.set(sym.toUpperCase(), price)
+          dirtySymbolsRef.current.add(sym.toUpperCase())
+        }
+      }
+      lastClientTickAtRef.current = Date.now()
+      setFeedStale(false)
+      setFeedAgeMs(0)
+    }
+  }, [])
+
+  const { connected: geckosConnected } = useGeckos({
+    port: 10208,
+    symbols: subscribedSymbols,
+    onMessage: handleGeckosMessage,
+    onConnect: () => {
+      console.log('[Geckos] Connected to real-time feed')
+      setFeedStale(false)
+    },
+    onDisconnect: () => {
+      console.log('[Geckos] Disconnected from real-time feed')
+      setFeedStale(true)
+    },
+    enabled: true
+  })
 
   useEffect(() => {
     const STALE_AFTER_MS = 15_000
@@ -249,154 +682,15 @@ export default function TerminalLayout() {
     return () => window.clearInterval(t)
   }, [])
 
-  // WebSocket subscription (single connection)
+  // WebSocket subscription disabled - using Geckos.io instead
+  const wsCreatedRef = useRef(false);
+  
   useEffect(() => {
-    const hostRaw = window.location.hostname
-    const host = hostRaw === 'localhost' || hostRaw === '::1' ? '127.0.0.1' : hostRaw
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${host}:3000/ws/stocks?mode=feed`
+    // WebSocket disabled - Geckos.io is now the primary real-time feed
+    wsCreatedRef.current = true;
+  }, [])
 
-    let closed = false
-    try {
-      wsRef.current?.close()
-    } catch {
-      // ignore
-    }
-
-    const ws = new WebSocket(url)
-    wsRef.current = ws
-
-    const sendSetSymbols = () => {
-      const next = subscribedSymbols
-      const key = next.join(',')
-      if (pendingSymbolsRef.current === key) return
-      pendingSymbolsRef.current = key
-      try {
-        ws.send(JSON.stringify({ type: 'set_symbols', symbols: next }))
-      } catch {
-        // ignore
-      }
-    }
-
-    ws.onopen = () => {
-      sendSetSymbols()
-    }
-
-    ws.onmessage = (ev) => {
-      let msg: unknown
-      try {
-        msg = JSON.parse(String(ev.data))
-      } catch {
-        return
-      }
-
-      if (!msg || typeof msg !== 'object') return
-      const m = msg as Record<string, unknown>
-
-      if (m.type === 'feed_status') {
-        setFeedStale(Boolean(m.stale))
-        const age = m.ageMs
-        setFeedAgeMs(typeof age === 'number' && Number.isFinite(age) ? age : null)
-        return
-      }
-
-      const scheduleLastPricesCacheFlush = () => {
-        if (lastPricesCacheTimerRef.current != null) return
-        lastPricesCacheTimerRef.current = window.setTimeout(() => {
-          lastPricesCacheTimerRef.current = null
-          try {
-            const dirty = lastPricesCacheDirtyRef.current
-            if (dirty.size === 0) return
-            const raw = window.localStorage.getItem(LAST_PRICES_CACHE_KEY)
-            const base = raw ? (JSON.parse(raw) as unknown) : {}
-            const cache: Record<string, { price?: unknown; ts?: unknown }> =
-              base && typeof base === 'object' ? (base as Record<string, { price?: unknown; ts?: unknown }>) : {}
-            for (const sym of Array.from(dirty)) {
-              const price = pricesRef.current.get(sym)
-              if (price == null || !Number.isFinite(price) || price <= 0) continue
-              cache[sym] = { price, ts: Date.now() }
-            }
-            dirty.clear()
-            window.localStorage.setItem(LAST_PRICES_CACHE_KEY, JSON.stringify(cache))
-          } catch {
-            // ignore
-          }
-        }, 600)
-      }
-
-      const applyPrice = (symRaw: unknown, priceRaw: unknown) => {
-        const sym = String(symRaw || '').toUpperCase()
-        const price = Number(priceRaw)
-        if (!sym || !Number.isFinite(price) || price <= 0) return
-        pricesRef.current.set(sym, price)
-        dirtySymbolsRef.current.add(sym)
-        lastPricesCacheDirtyRef.current.add(sym)
-        scheduleLastPricesCacheFlush()
-      }
-
-      if (m.type === 'init' && m.lastPrices && typeof m.lastPrices === 'object') {
-        for (const [sym, p] of Object.entries(m.lastPrices as Record<string, unknown>)) {
-          applyPrice(sym, p)
-        }
-        if (m.feedStatus && typeof m.feedStatus === 'object') {
-          const fs = m.feedStatus as Record<string, unknown>
-          setFeedStale(Boolean(fs.stale))
-          const age = fs.ageMs
-          setFeedAgeMs(typeof age === 'number' && Number.isFinite(age) ? age : null)
-        }
-        setFlashKey((x) => x + 1)
-        return
-      }
-
-      const applyTick = (raw: unknown) => {
-        if (!raw || typeof raw !== 'object') return
-        const r = raw as Record<string, unknown>
-        const sym = String(r.symbol || '').toUpperCase()
-        const price = Number(r.priceBRL)
-        if (!sym || !Number.isFinite(price) || price <= 0) return
-
-        lastClientTickAtRef.current = Date.now()
-        setFeedStale(false)
-        setFeedAgeMs(0)
-
-        const prev = pricesRef.current.get(sym)
-        if (prev != null && Number.isFinite(prev) && prev > 0 && prev !== price) {
-          prevPricesRef.current.set(sym, prev)
-          flashRef.current.set(sym, price > prev ? 'up' : 'down')
-          setFlashKey((x) => x + 1)
-          window.setTimeout(() => {
-            if (closed) return
-            flashRef.current.delete(sym)
-            setFlashKey((x) => x + 1)
-          }, 220)
-        }
-
-        applyPrice(sym, price)
-      }
-
-      if (m.type === 'tick') {
-        applyTick(m)
-        return
-      }
-
-      if (m.type === 'ticks' && Array.isArray(m.items)) {
-        for (const it of m.items) applyTick(it)
-      }
-    }
-
-    ws.onclose = () => {
-      // ignore
-    }
-
-    return () => {
-      closed = true
-      try {
-        ws.close()
-      } catch {
-        // ignore
-      }
-    }
-  }, [subscribedSymbols])
+  // Enviar símbolos quando mudar (via Geckos)
 
   // HFT paint loop: only update UI when some symbol changed (dirty set)
   useEffect(() => {
@@ -483,63 +777,114 @@ export default function TerminalLayout() {
           <NavLink to="/app" className="nav-link" end>
             Dashboard
           </NavLink>
-          <Link to="groups" className="nav-link">
-            Grupos
+          <Link to="sectors" className="nav-link">
+            Setores
           </Link>
-          <Link to="trading" className="nav-link">
-            Trading
-          </Link>
-          <Link to="market-stress" className="nav-link">
-            Market Stress
-          </Link>
-          <Link to="social" className="nav-link">
-            Social
-          </Link>
-          <Link to="portfolio" className="nav-link">
-            Portfolio
+          <Link to="carteira" className="nav-link">
+            Carteira
           </Link>
           <Link to="contracts" className="nav-link">
             Contracts
           </Link>
+          <Link to="social" className="nav-link">
+            Social
+          </Link>
         </nav>
         <div className="header-right">
+          <select
+            value={selectedSectorId}
+            onChange={(e) => setSelectedSectorId(String(e.target.value || ''))}
+            disabled={loadingSectors || sectors.length === 0}
+            style={{
+              height: 34,
+              maxWidth: 340,
+              padding: '0 10px',
+              borderRadius: 10,
+              border: '1px solid rgba(48, 54, 61, 0.6)',
+              background: 'rgba(13, 17, 23, 0.6)',
+              color: '#e6edf3',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+            title={loadingSectors ? 'Carregando setores...' : ''}
+            size={1}
+          >
+            <option value="__ALL__">TODOS (tempo real)</option>
+            {sectors.filter((s, i, arr) => arr.findIndex(x => x.sectorId === s.sectorId) === i).map((s) => (
+              <option key={s.sectorId} value={s.sectorId}>
+                {s.sectorId} - {s.sectorName} ({s.symbols})
+              </option>
+            ))}
+          </select>
           <span className={`feed-badge ${feedStale ? 'stale' : 'live'}`}
             title={feedAgeMs != null ? `Último tick há ${Math.round(feedAgeMs / 1000)}s` : 'Sem ticks recentes'}>
             {feedStale ? 'STALE' : 'LIVE'}
           </span>
-          <span className="account-info">Conta: {accountId}</span>
+          <span className="account-info">
+            <span className="atlas-avatar">{atlasName[0]}</span>
+            <span className="atlas-name">{atlasName}</span>
+          </span>
           <Link to="/logout" className="logout-btn">Sair</Link>
         </div>
       </header>
 
       {/* Main Layout */}
-      <div className="terminal-layout">
-        {/* Left Sidebar - Dashboard */}
-        <aside className={`sidebar-left ${sidebarCollapsed ? 'collapsed' : ''}`}>
-          <DashboardSidebar 
-            assets={assets}
-            watchlist={watchlist}
-            selectedAsset={selectedAsset}
-            onSelectAsset={setSelectedAsset}
-            loading={loadingAssets}
-            flashMap={flashMap}
-            flashKey={flashKey}
-          />
-        </aside>
-
-        {/* Center - Main Content */}
-        <main className="main-content">
+      <div className="terminal-layout" style={{ flex: 1, overflow: 'auto' }}>
+        {/* Center - Main Content Only (full width) */}
+        <main className="main-content" style={{ flex: 1, height: '100%' }}>
           <Outlet context={{ selectedAsset, setSelectedAsset, assets, accountId }} />
         </main>
-
-        {/* Right Sidebar - Messages */}
-        <aside className="sidebar-right">
-          <MessagesPanel />
-        </aside>
+        
+        {/* Right Sidebar - VEXOR_CHAT (hidden on social page) */}
+        {!useMatch('/app/social') && (
+          <aside className="sidebar-right">
+            <VexorChatWidget accountId={accountId} />
+          </aside>
+        )}
       </div>
 
-      {/* Styles */}
+      {/* Styles - Design System 3D */}
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        /* Animações globais */
+        @keyframes float {
+          0%, 100% { transform: translateY(0px) rotateX(0deg); }
+          50% { transform: translateY(-10px) rotateX(2deg); }
+        }
+        
+        @keyframes pulse-glow {
+          0%, 100% { box-shadow: 0 0 20px rgba(88, 166, 255, 0.3); }
+          50% { box-shadow: 0 0 40px rgba(88, 166, 255, 0.6); }
+        }
+        
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        
+        @keyframes rotate-3d {
+          0% { transform: perspective(1000px) rotateY(0deg); }
+          100% { transform: perspective(1000px) rotateY(360deg); }
+        }
+        
+        @keyframes slide-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        
+        @keyframes bounce-in {
+          0% { transform: scale(0.3); opacity: 0; }
+          50% { transform: scale(1.05); }
+          70% { transform: scale(0.9); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        
         .terminal-container {
           display: flex;
           flex-direction: column;
@@ -547,6 +892,8 @@ export default function TerminalLayout() {
           background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
           color: #e6edf3;
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+          perspective: 1000px;
+          animation: fade-in 0.5s ease-out;
         }
 
         .terminal-header {
@@ -556,7 +903,14 @@ export default function TerminalLayout() {
           padding: 12px 20px;
           background: rgba(13, 17, 23, 0.95);
           border-bottom: 1px solid rgba(48, 54, 61, 0.6);
-          backdrop-filter: blur(10px);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          box-shadow: 
+            0 4px 30px rgba(0, 0, 0, 0.3),
+            0 1px 0 rgba(255, 255, 255, 0.05) inset,
+            0 -1px 0 rgba(0, 0, 0, 0.2) inset;
+          transform-style: preserve-3d;
+          animation: slide-up 0.6s ease-out;
         }
 
         .header-left {
@@ -566,28 +920,40 @@ export default function TerminalLayout() {
         }
 
         .menu-toggle {
-          background: none;
-          border: none;
+          background: linear-gradient(145deg, rgba(48, 54, 61, 0.6), rgba(13, 17, 23, 0.8));
+          border: 1px solid rgba(255, 255, 255, 0.1);
           color: #8b949e;
           font-size: 18px;
           cursor: pointer;
-          padding: 8px;
-          border-radius: 6px;
-          transition: all 0.2s;
+          padding: 10px;
+          border-radius: 12px;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          box-shadow: 
+            0 4px 15px rgba(0, 0, 0, 0.2),
+            0 2px 4px rgba(0, 0, 0, 0.1),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          transform-style: preserve-3d;
         }
 
         .menu-toggle:hover {
-          background: rgba(48, 54, 61, 0.4);
+          background: linear-gradient(145deg, rgba(88, 166, 255, 0.2), rgba(35, 134, 54, 0.2));
           color: #e6edf3;
+          transform: translateY(-2px) rotateX(5deg);
+          box-shadow: 
+            0 8px 25px rgba(88, 166, 255, 0.3),
+            0 4px 10px rgba(0, 0, 0, 0.2);
         }
 
         .logo {
-          font-size: 20px;
+          font-size: 24px;
           font-weight: 700;
-          background: linear-gradient(135deg, #58a6ff 0%, #238636 100%);
+          background: linear-gradient(135deg, #58a6ff 0%, #238636 50%, #f0883e 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
+          text-shadow: 0 0 30px rgba(88, 166, 255, 0.5);
+          animation: pulse-glow 3s ease-in-out infinite;
+          letter-spacing: -0.5px;
         }
 
         .header-nav {
@@ -598,21 +964,52 @@ export default function TerminalLayout() {
         .nav-link {
           color: #8b949e;
           text-decoration: none;
-          padding: 8px 16px;
-          border-radius: 6px;
+          padding: 10px 18px;
+          border-radius: 12px;
           font-size: 13px;
           font-weight: 500;
-          transition: all 0.2s;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          background: linear-gradient(145deg, rgba(48, 54, 61, 0.3), rgba(13, 17, 23, 0.5));
+          border: 1px solid transparent;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+          transform-style: preserve-3d;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .nav-link::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+          transition: left 0.5s;
+        }
+
+        .nav-link:hover::before {
+          left: 100%;
         }
 
         .nav-link:hover {
           color: #e6edf3;
-          background: rgba(48, 54, 61, 0.4);
+          background: linear-gradient(145deg, rgba(88, 166, 255, 0.15), rgba(35, 134, 54, 0.15));
+          border-color: rgba(88, 166, 255, 0.3);
+          transform: translateY(-3px) rotateX(5deg);
+          box-shadow: 
+            0 10px 30px rgba(88, 166, 255, 0.2),
+            0 5px 15px rgba(0, 0, 0, 0.1);
         }
 
         .nav-link.active {
           color: #58a6ff;
-          background: rgba(88, 166, 255, 0.1);
+          background: linear-gradient(145deg, rgba(88, 166, 255, 0.2), rgba(88, 166, 255, 0.1));
+          border-color: rgba(88, 166, 255, 0.4);
+          box-shadow: 
+            0 0 20px rgba(88, 166, 255, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          animation: pulse-glow 2s ease-in-out infinite;
         }
 
         .header-right {
@@ -622,52 +1019,96 @@ export default function TerminalLayout() {
         }
 
         .feed-badge {
-          padding: 4px 10px;
+          padding: 6px 14px;
           border-radius: 999px;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 700;
-          letter-spacing: 0.6px;
+          letter-spacing: 0.8px;
           border: 1px solid rgba(240, 246, 252, 0.18);
           user-select: none;
+          transition: all 0.3s ease;
+          transform-style: preserve-3d;
         }
 
         .feed-badge.live {
-          background: rgba(63, 185, 80, 0.14);
-          border-color: rgba(63, 185, 80, 0.35);
+          background: linear-gradient(145deg, rgba(63, 185, 80, 0.2), rgba(63, 185, 80, 0.1));
+          border-color: rgba(63, 185, 80, 0.4);
           color: #3fb950;
+          box-shadow: 
+            0 0 20px rgba(63, 185, 80, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+          animation: pulse-glow 2s ease-in-out infinite;
         }
 
         .feed-badge.stale {
-          background: rgba(248, 81, 73, 0.12);
-          border-color: rgba(248, 81, 73, 0.35);
+          background: linear-gradient(145deg, rgba(248, 81, 73, 0.2), rgba(248, 81, 73, 0.1));
+          border-color: rgba(248, 81, 73, 0.4);
           color: #f85149;
+          box-shadow: 0 0 15px rgba(248, 81, 73, 0.2);
         }
 
         .account-info {
+          display: flex;
+          align-items: center;
+          gap: 10px;
           font-size: 13px;
           color: #8b949e;
-          background: rgba(48, 54, 61, 0.4);
-          padding: 6px 12px;
+          background: linear-gradient(145deg, rgba(48, 54, 61, 0.5), rgba(13, 17, 23, 0.7));
+          padding: 8px 16px;
           border-radius: 20px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+          transition: all 0.3s ease;
+        }
+
+        .atlas-avatar {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #0095f6, #00c6ff);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 600;
+          font-size: 12px;
+          color: white;
+        }
+
+        .atlas-name {
+          font-weight: 600;
+          color: #e6edf3;
+        }
+
+        .account-info:hover {
+          background: linear-gradient(145deg, rgba(88, 166, 255, 0.1), rgba(35, 134, 54, 0.1));
+          border-color: rgba(88, 166, 255, 0.2);
+          transform: translateY(-2px);
         }
 
         .logout-btn {
           color: #f85149;
           text-decoration: none;
           font-size: 13px;
-          padding: 8px 16px;
-          border-radius: 6px;
-          transition: all 0.2s;
+          padding: 10px 18px;
+          border-radius: 12px;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          background: linear-gradient(145deg, rgba(248, 81, 73, 0.1), rgba(248, 81, 73, 0.05));
+          border: 1px solid rgba(248, 81, 73, 0.2);
+          box-shadow: 0 2px 10px rgba(248, 81, 73, 0.1);
         }
 
         .logout-btn:hover {
-          background: rgba(248, 81, 73, 0.1);
+          background: linear-gradient(145deg, rgba(248, 81, 73, 0.2), rgba(248, 81, 73, 0.1));
+          border-color: rgba(248, 81, 73, 0.4);
+          transform: translateY(-2px) rotateX(5deg);
+          box-shadow: 0 8px 25px rgba(248, 81, 73, 0.2);
         }
 
         .terminal-layout {
           display: flex;
           flex: 1;
           overflow: hidden;
+          perspective: 1000px;
         }
 
         .sidebar-left {
@@ -675,11 +1116,14 @@ export default function TerminalLayout() {
           background: rgba(13, 17, 23, 0.8);
           border-right: 1px solid rgba(48, 54, 61, 0.4);
           overflow-y: auto;
-          transition: width 0.3s ease;
+          transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+          box-shadow: 5px 0 30px rgba(0, 0, 0, 0.3);
+          transform-style: preserve-3d;
         }
 
         .sidebar-left.collapsed {
           width: 60px;
+          transform: rotateY(-5deg);
         }
 
         .main-content {
@@ -689,6 +1133,7 @@ export default function TerminalLayout() {
           overflow: hidden;
           padding: 20px;
           overflow-y: auto;
+          animation: fade-in 0.8s ease-out;
         }
 
         .sidebar-right {
@@ -696,6 +1141,28 @@ export default function TerminalLayout() {
           background: rgba(13, 17, 23, 0.8);
           border-left: 1px solid rgba(48, 54, 61, 0.4);
           overflow-y: auto;
+          box-shadow: -5px 0 30px rgba(0, 0, 0, 0.3);
+          transform-style: preserve-3d;
+        }
+        
+        /* Select dropdown 3D */
+        select {
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2358a6ff' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 12px center;
+          padding-right: 36px !important;
+        }
+        
+        select:hover {
+          border-color: rgba(88, 166, 255, 0.5) !important;
+          box-shadow: 0 0 20px rgba(88, 166, 255, 0.2);
+        }
+        
+        select:focus {
+          outline: none;
+          border-color: rgba(88, 166, 255, 0.6) !important;
+          box-shadow: 0 0 25px rgba(88, 166, 255, 0.3);
         }
       `}</style>
     </div>
@@ -711,6 +1178,7 @@ function DashboardSidebar({
   loading,
   flashMap,
   flashKey,
+  getSourcesForSymbol,
 }: { 
   assets: AssetItem[]
   watchlist: AssetItem[]
@@ -719,6 +1187,7 @@ function DashboardSidebar({
   loading: boolean
   flashMap: Map<string, 'up' | 'down'>
   flashKey: number
+  getSourcesForSymbol: (symbol: string) => AssetSource | undefined
 }) {
   if (loading) {
     return (
@@ -741,7 +1210,19 @@ function DashboardSidebar({
             >
               <div className="asset-info">
                 <span className="asset-symbol">{asset.symbol}</span>
-                <span className="asset-name">{asset.name}</span>
+                <div className="asset-name">
+                  {asset.name}
+                  {(() => {
+                    const meta = getSourcesForSymbol(asset.symbol)
+                    const srcs = meta ? Array.from(meta.bySource.entries()).sort((a, b) => b[1] - a[1]).map(([s]) => s) : []
+                    if (srcs.length === 0) return null
+                    return (
+                      <span style={{ opacity: 0.65, marginLeft: 8, fontSize: 12 }}>
+                        {srcs.slice(0, 3).join(' / ')}
+                      </span>
+                    )
+                  })()}
+                </div>
               </div>
               <div className="asset-price">
                 <span className="price-value">
@@ -768,7 +1249,19 @@ function DashboardSidebar({
             >
               <div className="asset-info">
                 <span className="asset-symbol">{asset.symbol}</span>
-                <span className="asset-name">{asset.name}</span>
+                <div className="asset-name">
+                  {asset.name}
+                  {(() => {
+                    const meta = getSourcesForSymbol(asset.symbol)
+                    const srcs = meta ? Array.from(meta.bySource.entries()).sort((a, b) => b[1] - a[1]).map(([s]) => s) : []
+                    if (srcs.length === 0) return null
+                    return (
+                      <span style={{ opacity: 0.65, marginLeft: 8, fontSize: 12 }}>
+                        {srcs.slice(0, 3).join(' / ')}
+                      </span>
+                    )
+                  })()}
+                </div>
               </div>
               <div className="asset-price">
                 <span className="price-value">

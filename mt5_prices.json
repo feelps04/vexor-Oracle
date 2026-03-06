@@ -1,0 +1,138 @@
+{
+  "VIX": {
+    "symbol": "VIX",
+    "bid": 21.65,
+    "ask": 21.81,
+    "last": 0,
+    "time": 1772523553,
+    "time_msc": 1772523553793
+  },
+  "EURUSD": {
+    "symbol": "EURUSD",
+    "bid": 1.16702,
+    "ask": 1.16702,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597152
+  },
+  "USDCHF": {
+    "symbol": "USDCHF",
+    "bid": 0.78107,
+    "ask": 0.78109,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597284
+  },
+  "USDMXN": {
+    "symbol": "USDMXN",
+    "bid": 17.33628,
+    "ask": 17.33896,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597355
+  },
+  "EURGBP": {
+    "symbol": "EURGBP",
+    "bid": 0.87274,
+    "ask": 0.87276,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597342
+  },
+  "EURAUD": {
+    "symbol": "EURAUD",
+    "bid": 1.6463100000000002,
+    "ask": 1.64641,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597304
+  },
+  "USDJPY": {
+    "symbol": "USDJPY",
+    "bid": 157.351,
+    "ask": 157.354,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597149
+  },
+  "AUDUSD": {
+    "symbol": "AUDUSD",
+    "bid": 0.70884,
+    "ask": 0.70885,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597354
+  },
+  "USDCAD": {
+    "symbol": "USDCAD",
+    "bid": 1.36744,
+    "ask": 1.36748,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597314
+  },
+  "AUDJPY": {
+    "symbol": "AUDJPY",
+    "bid": 111.535,
+    "ask": 111.545,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597314
+  },
+  "USDINR": {
+    "symbol": "USDINR",
+    "bid": 91.881,
+    "ask": 91.978,
+    "last": 0,
+    "time": 1772492337,
+    "time_msc": 1772492337230
+  },
+  "GBPJPY": {
+    "symbol": "GBPJPY",
+    "bid": 210.408,
+    "ask": 210.418,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597258
+  },
+  "USDBRL": {
+    "symbol": "USDBRL",
+    "bid": 5.21453,
+    "ask": 5.21782,
+    "last": 0,
+    "time": 1772492338,
+    "time_msc": 1772492338464
+  },
+  "USDZAR": {
+    "symbol": "USDZAR",
+    "bid": 16.12058,
+    "ask": 16.12793,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597375
+  },
+  "EURJPY": {
+    "symbol": "EURJPY",
+    "bid": 183.631,
+    "ask": 183.644,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597346
+  },
+  "GBPUSD": {
+    "symbol": "GBPUSD",
+    "bid": 1.33721,
+    "ask": 1.33724,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597258
+  },
+  "NZDUSD": {
+    "symbol": "NZDUSD",
+    "bid": 0.59281,
+    "ask": 0.59283,
+    "last": 0,
+    "time": 1772523597,
+    "time_msc": 1772523597392
+  }
+}

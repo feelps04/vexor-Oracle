@@ -53,4 +53,3 @@ class LatencySensor {
     }
 }
 exports.LatencySensor = LatencySensor;
-//# sourceMappingURL=latency-sensor.js.map

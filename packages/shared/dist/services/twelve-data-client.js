@@ -104,4 +104,3 @@ class TwelveDataClient {
     }
 }
 exports.TwelveDataClient = TwelveDataClient;
-//# sourceMappingURL=twelve-data-client.js.map

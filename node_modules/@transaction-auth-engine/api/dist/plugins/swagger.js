@@ -28,4 +28,3 @@ async function registerSwagger(app) {
         });
     }
 }
-//# sourceMappingURL=swagger.js.map

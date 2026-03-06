@@ -46,6 +46,118 @@ async function stocksWsRoutes(app, opts) {
     const lastDepthMem = new Map();
     const lastTradesMem = new Map();
     let lastStatusMem = null;
+    const parseSourceTs = (raw, fallback) => {
+        const direct = Number(raw?.ts);
+        if (Number.isFinite(direct) && direct > 0)
+            return direct;
+        const t = raw?.timestamp;
+        if (typeof t === 'string') {
+            const p = Date.parse(t);
+            if (Number.isFinite(p) && p > 0)
+                return p;
+        }
+        return fallback;
+    };
+    const broadcastTick = (params) => {
+        const { symbol, priceBRL, ts, source, receivedAt } = params;
+        lastTickTs = receivedAt;
+        totalTicksSinceLastFlush += 1;
+        perSecondCounts.set(symbol, (perSecondCounts.get(symbol) ?? 0) + 1);
+        if (Number.isFinite(priceBRL) && priceBRL > 0) {
+            lastPriceMem.set(symbol, priceBRL);
+        }
+        const subs = symbolSubs.get(symbol);
+        if (!subs || subs.size === 0)
+            return;
+        const out = {
+            symbol,
+            priceBRL: Number.isFinite(priceBRL) ? priceBRL : 0,
+            ts: Number.isFinite(ts) && ts > 0 ? ts : receivedAt,
+            source: source || undefined,
+        };
+        const enqueueTick = (ws) => {
+            const streams = connStreams.get(ws);
+            if (streams && !streams.has(STREAM_TICKS))
+                return;
+            const mode = connMode.get(ws) ?? 'feed';
+            if (mode === 'symbol' || !(Number.isFinite(TICK_BATCH_MS) && TICK_BATCH_MS > 0)) {
+                try {
+                    ws.send(JSON.stringify({ type: 'tick', ...out }));
+                }
+                catch {
+                    // ignore
+                }
+                return;
+            }
+            let st = tickBatchState.get(ws);
+            if (!st) {
+                st = { items: [] };
+                tickBatchState.set(ws, st);
+            }
+            st.items.push(out);
+            if (st.items.length >= 500) {
+                try {
+                    ws.send(JSON.stringify({ type: 'ticks', ts: Date.now(), items: st.items }));
+                }
+                catch {
+                    // ignore
+                }
+                st.items = [];
+                if (st.timer) {
+                    clearTimeout(st.timer);
+                    delete st.timer;
+                }
+                return;
+            }
+            if (st.timer)
+                return;
+            st.timer = setTimeout(() => {
+                const curr = tickBatchState.get(ws);
+                if (!curr || curr.items.length === 0) {
+                    if (curr?.timer) {
+                        clearTimeout(curr.timer);
+                        delete curr.timer;
+                    }
+                    return;
+                }
+                const items = curr.items;
+                curr.items = [];
+                if (curr.timer) {
+                    clearTimeout(curr.timer);
+                    delete curr.timer;
+                }
+                try {
+                    ws.send(JSON.stringify({ type: 'ticks', ts: Date.now(), items }));
+                }
+                catch {
+                    // ignore
+                }
+            }, TICK_BATCH_MS);
+        };
+        for (const ws of subs)
+            enqueueTick(ws);
+    };
+    // When Kafka is not available (or when you want a local/parallel watchdog),
+    // sectorRoutes can ingest ticks via HTTP and emit them through the Fastify instance.
+    // We subscribe here and broadcast to WS clients.
+    const INGEST_EVENT = 'market:ingest_tick';
+    try {
+        app.server.on(INGEST_EVENT, (ev) => {
+            const receivedAt = Date.now();
+            const symbol = String(ev?.symbol ?? '').trim().toUpperCase();
+            const priceBRL = Number(ev?.priceBRL ?? ev?.price);
+            if (!symbol)
+                return;
+            if (!Number.isFinite(priceBRL) || priceBRL <= 0)
+                return;
+            const ts = parseSourceTs(ev ?? {}, receivedAt);
+            const source = String(ev?.source ?? '').trim() || undefined;
+            broadcastTick({ symbol, priceBRL, ts, source, receivedAt });
+        });
+    }
+    catch {
+        // ignore
+    }
     const initQuoteCache = new Map();
     const INIT_QUOTE_CACHE_TTL_MS = Number(process.env.STOCKS_WS_INIT_QUOTE_CACHE_TTL_MS ?? 60_000);
     const INIT_QUOTE_TIMEOUT_MS = Number(process.env.STOCKS_WS_INIT_QUOTE_TIMEOUT_MS ?? 2500);
@@ -277,6 +389,7 @@ async function stocksWsRoutes(app, opts) {
                         if (!symbol)
                             return;
                         const price = Number(tick.priceBRL ?? tick.price);
+                        const source = String(tick.source ?? '').trim() || undefined;
                         const sourceTs = Number(tick.ts) ||
                             (typeof tick.timestamp === 'string' ? Date.parse(tick.timestamp) : 0) ||
                             0;
@@ -307,6 +420,7 @@ async function stocksWsRoutes(app, opts) {
                                 symbol,
                                 priceBRL: Number.isFinite(price) ? price : 0,
                                 ts: Number.isFinite(ts) ? ts : receivedAt,
+                                source,
                             };
                             const enqueueTick = (ws) => {
                                 const streams = connStreams.get(ws);
@@ -960,6 +1074,64 @@ async function stocksWsRoutes(app, opts) {
         const activeSymbols = new Set();
         attachSymbol(symbol);
         activeSymbols.add(symbol);
+        const sendSymbolInit = async () => {
+            try {
+                const sym = String(symbol || '').trim().toUpperCase();
+                const last = {};
+                const mem = lastPriceMem.get(sym);
+                if (mem != null && Number.isFinite(mem) && mem > 0) {
+                    last[sym] = mem;
+                }
+                if (last[sym] == null && redis) {
+                    try {
+                        const v = await redis.get(`${LAST_PRICE_PREFIX}${sym}`);
+                        const n = Number(v);
+                        if (Number.isFinite(n) && n > 0)
+                            last[sym] = n;
+                    }
+                    catch {
+                        // ignore
+                    }
+                }
+                // Always send init immediately. Backfill (if needed) runs asynchronously.
+                const initTs = Date.now();
+                try {
+                    sock.send(JSON.stringify({ type: 'init', ts: initTs, lastPrices: last, feedStatus: snapshotFeedStatus() }));
+                }
+                catch {
+                    // ignore
+                }
+                if (last[sym] == null) {
+                    void (async () => {
+                        try {
+                            const md = await fetchMarketDataQuote(sym);
+                            if (md == null || !Number.isFinite(md) || md <= 0)
+                                return;
+                            lastPriceMem.set(sym, md);
+                            try {
+                                sock.send(JSON.stringify({
+                                    type: 'tick',
+                                    symbol: sym,
+                                    priceBRL: md,
+                                    ts: Date.now(),
+                                    source: 'init_quote',
+                                }));
+                            }
+                            catch {
+                                // ignore
+                            }
+                        }
+                        catch {
+                            // ignore
+                        }
+                    })();
+                }
+            }
+            catch {
+                // ignore
+            }
+        };
+        void sendSymbolInit();
         sock.on('message', (data) => {
             let msg = null;
             try {
@@ -1024,4 +1196,3 @@ async function stocksWsRoutes(app, opts) {
         }
     });
 }
-//# sourceMappingURL=stocks-ws.js.map

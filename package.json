@@ -9,11 +9,25 @@
     "build": "npm run build -w @transaction-auth-engine/core && npm run build -w @transaction-auth-engine/shared && npm run build -w web && npm run build -w @transaction-auth-engine/producer && npm run build -w @transaction-auth-engine/consumer && npm run build -w @transaction-auth-engine/notifier && npm run build -w @transaction-auth-engine/api && npm run build -w @transaction-auth-engine/btc-price-producer && npm run build -w @transaction-auth-engine/stock-price-producer && npm run build -w @transaction-auth-engine/b3-connector && npm run build -w @transaction-auth-engine/opportunity-detector && npm run build -w @transaction-auth-engine/opportunity-justifier && npm run build -w @transaction-auth-engine/shadow-mirror",
     "build:all": "npm run build --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present",
+    "dev": "npm run dev -w web",
     "qa:fix-wrapper": "docker compose -f .\\docker-compose.yml exec -T fix-wrapper-cpp /bin/bash -lc \"/app/scripts/check-fix-engine.sh\"",
     "qa:fix-wrapper:chaos": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\qa-fix-wrapper-chaos.ps1",
     "dev:fix:logs": "docker compose -f .\\docker-compose.yml logs -f fix-wrapper-cpp"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@fails-components/webtransport-transport-http3-quiche": "^1.5.3",
+    "@types/node-forge": "^1.3.14",
+    "node-forge": "^1.3.3",
+    "selfsigned": "^5.5.0"
+  },
+  "dependencies": {
+    "@geckos.io/client": "^3.0.2",
+    "@geckos.io/server": "^3.0.2",
+    "axios": "^1.13.6",
+    "express": "^5.2.1",
+    "ws": "^8.19.0"
   }
 }

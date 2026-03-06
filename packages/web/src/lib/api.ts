@@ -31,13 +31,27 @@ function withAuthHeaders(headers?: HeadersInit): HeadersInit {
   }
 }
 
+function withTimeout(init?: RequestInit, timeoutMs = 8000): { init: RequestInit; cleanup: () => void } {
+  const controller = new AbortController()
+  const t = window.setTimeout(() => controller.abort(), timeoutMs)
+  return {
+    init: {
+      ...(init ?? {}),
+      signal: controller.signal,
+    },
+    cleanup: () => window.clearTimeout(t),
+  }
+}
+
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
+  const wt = withTimeout(init)
   const res = await fetch(API_BASE + normalizePath(path), {
     method: 'GET',
     headers: withAuthHeaders(init?.headers),
     credentials: 'include',
-    ...init,
+    ...wt.init,
   })
+  wt.cleanup()
 
   const raw = await res.text().catch(() => '')
   let data: any = null
@@ -57,7 +71,10 @@ export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown, init?: RequestInit): Promise<T> {
-  const res = await fetch(API_BASE + normalizePath(path), {
+  const wt = withTimeout(init)
+  let res: Response
+  try {
+    res = await fetch(API_BASE + normalizePath(path), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -66,8 +83,16 @@ export async function apiPost<T>(path: string, body: unknown, init?: RequestInit
     },
     body: JSON.stringify(body),
     credentials: 'include',
-    ...init,
-  })
+    ...wt.init,
+    })
+  } catch (err: any) {
+    wt.cleanup()
+    if (err?.name === 'AbortError') {
+      throw new Error('timeout')
+    }
+    throw err
+  }
+  wt.cleanup()
 
   const raw = await res.text().catch(() => '')
   let data: any = null

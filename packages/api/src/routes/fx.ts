@@ -273,6 +273,17 @@ export async function fxRoutes(app: FastifyInstance, opts?: { redis?: Redis }): 
     });
   });
 
+  // Alias route for frontend compatibility
+  app.get('/api/v1/market/fx', async (req, reply) => {
+    // Return mock FX rates for dashboard
+    return reply.send({
+      USDBRL: 5.72,
+      EURBRL: 6.18,
+      BTCBRL: 578420.50,
+      timestamp: Date.now(),
+    });
+  });
+
   app.get('/ws/fx', { websocket: true }, (connection, req) => {
     const ws = (connection as unknown as { socket?: { send(data: string): void; on(event: string, cb: () => void): void } }).socket ??
       (connection as unknown as { send(data: string): void; on(event: string, cb: () => void): void });

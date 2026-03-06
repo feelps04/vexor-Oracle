@@ -245,4 +245,3 @@ async function btcWsRoutes(app, opts) {
         }
     });
 }
-//# sourceMappingURL=btc-ws.js.map

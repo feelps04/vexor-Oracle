@@ -23,4 +23,3 @@ async function runProduceLoop(producer, logger, config = {}) {
         }
     }, intervalMs);
 }
-//# sourceMappingURL=produce-transactions.js.map

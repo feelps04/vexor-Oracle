@@ -49,205 +49,273 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <div className="login-header">
-          <div className="logo">Dashboard</div>
-          <h1>Bem-vindo de volta</h1>
-          <p>Entre na sua conta para acessar o trading</p>
-        </div>
-
-        <form onSubmit={onSubmit} className="login-form">
-          <div className="form-group">
-            <label>Email</label>
-            <input 
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)} 
-              type="email" 
-              required 
-              placeholder="seu@email.com"
-            />
+    <div className="vexor-auth">
+      <div className="vexor-auth__container">
+        <div className="vexor-auth__card">
+          <div className="vexor-auth__icon">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="3" width="18" height="18" rx="4" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M8 10l3 2-3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M13 14h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </div>
+          
+          <div className="vexor-auth__header">
+            <h1 className="vexor-auth__title">AUTENTICAÇÃO</h1>
+            <p className="vexor-auth__subtitle">PROTOCOLO VEXOR DE ACESSO</p>
           </div>
 
-          <div className="form-group">
-            <label>Senha</label>
-            <input 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-              type="password" 
-              required 
-              placeholder="••••••••"
-            />
+          <form onSubmit={onSubmit} className="vexor-auth__form">
+            <div className="vexor-auth__field">
+              <label className="vexor-auth__label">IDENTIFICAÇÃO (EMAIL)</label>
+              <div className="vexor-auth__input-wrapper">
+                <svg className="vexor-auth__input-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M15 7a2 2 0 012 2v4a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2h6z" stroke="currentColor" strokeWidth="1.5"/>
+                  <circle cx="9" cy="10" r="1" fill="currentColor"/>
+                </svg>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  placeholder="admin@vexor.network"
+                  className="vexor-auth__input"
+                />
+              </div>
+            </div>
+
+            <div className="vexor-auth__field">
+              <label className="vexor-auth__label">CHAVE DE ENCRIPTAÇÃO</label>
+              <div className="vexor-auth__input-wrapper">
+                <svg className="vexor-auth__input-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5"/>
+                  <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  placeholder="••••••••••••"
+                  className="vexor-auth__input"
+                />
+              </div>
+            </div>
+
+            {info ? <div className="vexor-auth__info">{info}</div> : null}
+            {error ? <div className="vexor-auth__error">{error}</div> : null}
+
+            <button type="submit" disabled={loading} className="vexor-auth__submit">
+              {loading ? 'CONECTANDO...' : 'ESTABELECER CONEXÃO'}
+            </button>
+          </form>
+
+          <div className="vexor-auth__footer">
+            <Link to="/register" className="vexor-auth__link">
+              [ SOLICITAR NOVO REGISTRO NO SISTEMA ]
+            </Link>
           </div>
-
-          {info ? <div className="info-message">{info}</div> : null}
-          {error ? <div className="error-message">{error}</div> : null}
-
-          <button type="submit" disabled={loading} className="btn-login">
-            {loading ? 'Entrando...' : 'Entrar'}
-          </button>
-        </form>
-
-        <div className="login-footer">
-          <p>Não tem conta? <Link to="/register" className="link-register">Cadastre-se</Link></p>
         </div>
       </div>
 
       <style>{`
-        .login-container {
+        .vexor-auth {
           min-height: 100vh;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
+          background: #000;
+          font-family: 'Space Grotesk', system-ui, sans-serif;
+        }
+
+        .vexor-auth__container {
+          width: 100%;
+          max-width: 400px;
           padding: 20px;
         }
 
-        .login-card {
-          width: 100%;
-          max-width: 420px;
-          background: rgba(48, 54, 61, 0.2);
-          border: 1px solid rgba(48, 54, 61, 0.4);
-          border-radius: 16px;
-          padding: 40px;
+        .vexor-auth__card {
+          background: rgba(0, 0, 0, 0.6);
+          border: 1px solid rgba(0, 255, 255, 0.15);
+          border-radius: 12px;
+          padding: 48px 32px;
           backdrop-filter: blur(10px);
+          box-shadow: 
+            0 0 60px rgba(0, 255, 255, 0.05),
+            inset 0 0 60px rgba(0, 255, 255, 0.02);
         }
 
-        .login-header {
+        .vexor-auth__icon {
+          width: 48px;
+          height: 48px;
+          margin: 0 auto 24px;
+          color: rgba(0, 255, 255, 0.8);
+          border: 1px solid rgba(0, 255, 255, 0.2);
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 10px;
+          box-shadow: 0 0 20px rgba(0, 255, 255, 0.1);
+        }
+
+        .vexor-auth__icon svg {
+          width: 100%;
+          height: 100%;
+        }
+
+        .vexor-auth__header {
           text-align: center;
-          margin-bottom: 32px;
+          margin-bottom: 40px;
         }
 
-        .logo {
-          font-size: 28px;
-          font-weight: 700;
-          background: linear-gradient(135deg, #58a6ff 0%, #238636 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          margin-bottom: 16px;
-        }
-
-        .login-header h1 {
+        .vexor-auth__title {
+          font-family: 'Orbitron', system-ui, sans-serif;
+          font-size: 20px;
+          font-weight: 500;
+          letter-spacing: 0.15em;
+          color: rgba(255, 255, 255, 0.95);
           margin: 0 0 8px 0;
-          font-size: 24px;
-          font-weight: 600;
-          color: #e6edf3;
         }
 
-        .login-header p {
+        .vexor-auth__subtitle {
+          font-size: 10px;
+          letter-spacing: 0.25em;
+          color: rgba(255, 255, 255, 0.5);
+          text-transform: uppercase;
           margin: 0;
-          font-size: 14px;
-          color: #8b949e;
         }
 
-        .login-form {
+        .vexor-auth__form {
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 24px;
         }
 
-        .form-group {
+        .vexor-auth__field {
           display: flex;
           flex-direction: column;
           gap: 8px;
         }
 
-        .form-group label {
-          font-size: 13px;
+        .vexor-auth__label {
+          font-size: 9px;
+          letter-spacing: 0.15em;
+          color: #00FFFF;
+          text-transform: uppercase;
           font-weight: 500;
-          color: #e6edf3;
         }
 
-        .form-group input {
-          padding: 14px 16px;
-          background: rgba(13, 17, 23, 0.6);
-          border: 1px solid rgba(48, 54, 61, 0.6);
-          border-radius: 10px;
-          color: #e6edf3;
-          font-size: 14px;
-          transition: all 0.2s;
+        .vexor-auth__input-wrapper {
+          position: relative;
+          display: flex;
+          align-items: center;
         }
 
-        .form-group input:focus {
+        .vexor-auth__input-icon {
+          position: absolute;
+          left: 14px;
+          width: 16px;
+          height: 16px;
+          color: rgba(255, 255, 255, 0.4);
+          z-index: 1;
+        }
+
+        .vexor-auth__input {
+          width: 100%;
+          padding: 14px 14px 14px 40px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          color: rgba(255, 255, 255, 0.8);
+          font-size: 13px;
+          font-family: 'JetBrains Mono', monospace;
+          transition: all 0.2s ease;
+        }
+
+        .vexor-auth__input::placeholder {
+          color: rgba(255, 255, 255, 0.3);
+        }
+
+        .vexor-auth__input:focus {
           outline: none;
-          border-color: #58a6ff;
-          box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+          border-color: rgba(0, 255, 255, 0.4);
+          box-shadow: 0 0 0 1px rgba(0, 255, 255, 0.1), inset 0 0 20px rgba(0, 255, 255, 0.03);
         }
 
-        .form-group input::placeholder {
-          color: #6e7681;
-        }
-
-        .info-message {
+        .vexor-auth__info {
           padding: 12px 16px;
-          background: rgba(88, 166, 255, 0.1);
-          border: 1px solid rgba(88, 166, 255, 0.3);
-          border-radius: 8px;
-          font-size: 13px;
-          color: #58a6ff;
+          background: rgba(0, 255, 255, 0.08);
+          border: 1px solid rgba(0, 255, 255, 0.2);
+          border-radius: 6px;
+          font-size: 11px;
+          color: rgba(0, 255, 255, 0.8);
+          line-height: 1.5;
         }
 
-        .error-message {
+        .vexor-auth__error {
           padding: 12px 16px;
-          background: rgba(248, 81, 73, 0.1);
-          border: 1px solid rgba(248, 81, 73, 0.3);
-          border-radius: 8px;
-          font-size: 13px;
-          color: #f85149;
+          background: rgba(255, 0, 0, 0.08);
+          border: 1px solid rgba(255, 0, 0, 0.2);
+          border-radius: 6px;
+          font-size: 11px;
+          color: rgba(255, 100, 100, 0.9);
         }
 
-        .btn-login {
-          padding: 14px;
-          background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
-          border: none;
-          border-radius: 10px;
-          color: white;
-          font-size: 15px;
-          font-weight: 600;
+        .vexor-auth__submit {
+          padding: 16px 24px;
+          background: transparent;
+          border: 1px solid rgba(0, 255, 255, 0.4);
+          border-radius: 6px;
+          color: #00FFFF;
+          font-family: 'Orbitron', system-ui, sans-serif;
+          font-size: 11px;
+          font-weight: 500;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
           cursor: pointer;
-          transition: all 0.2s;
+          transition: all 0.2s ease;
           margin-top: 8px;
         }
 
-        .btn-login:hover:not(:disabled) {
-          background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%);
-          transform: translateY(-1px);
+        .vexor-auth__submit:hover:not(:disabled) {
+          background: rgba(0, 255, 255, 0.08);
+          border-color: rgba(0, 255, 255, 0.6);
+          box-shadow: 0 0 20px rgba(0, 255, 255, 0.15);
         }
 
-        .btn-login:disabled {
-          opacity: 0.6;
+        .vexor-auth__submit:disabled {
+          opacity: 0.5;
           cursor: not-allowed;
         }
 
-        .login-footer {
+        .vexor-auth__footer {
           text-align: center;
-          margin-top: 24px;
+          margin-top: 32px;
           padding-top: 24px;
-          border-top: 1px solid rgba(48, 54, 61, 0.4);
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .login-footer p {
-          margin: 0;
-          font-size: 14px;
-          color: #8b949e;
-        }
-
-        .link-register {
-          color: #58a6ff;
+        .vexor-auth__link {
+          font-size: 9px;
+          letter-spacing: 0.15em;
+          color: rgba(255, 255, 255, 0.4);
           text-decoration: none;
-          font-weight: 500;
-          transition: color 0.2s;
+          text-transform: uppercase;
+          transition: color 0.2s ease;
         }
 
-        .link-register:hover {
-          color: #79b8ff;
-          text-decoration: underline;
+        .vexor-auth__link:hover {
+          color: rgba(0, 255, 255, 0.7);
         }
 
         @media (max-width: 480px) {
-          .login-card {
-            padding: 24px;
+          .vexor-auth__card {
+            padding: 36px 24px;
+          }
+          
+          .vexor-auth__title {
+            font-size: 18px;
           }
         }
       `}</style>

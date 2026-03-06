@@ -53,4 +53,3 @@ async function runMigrations(pg) {
         throw err;
     }
 }
-//# sourceMappingURL=migrations.js.map

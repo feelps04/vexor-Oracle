@@ -5,8 +5,47 @@ import {
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
+  type CandlestickData,
 } from 'lightweight-charts'
 import { apiGet, apiPost } from '../../lib/api'
+
+// Cache global de candles por símbolo (persiste na RAM)
+const candlesCache = new Map<string, Map<string, CandlestickData[]>>()
+
+// Conexão global MT5 WebSocket (compartilhada entre todas as instâncias)
+let mt5Ws: WebSocket | null = null
+let mt5WsCallbacks: Set<(data: any) => void> = new Set()
+
+function getMt5Ws(): WebSocket | null {
+  if (mt5Ws && mt5Ws.readyState === WebSocket.OPEN) {
+    return mt5Ws
+  }
+  
+  if (!mt5Ws || mt5Ws.readyState === WebSocket.CLOSED) {
+    try {
+      mt5Ws = new WebSocket('ws://127.0.0.1:8765')
+      mt5Ws.onopen = () => {
+        console.log('[MT5 WS] Connected to real-time data')
+      }
+      mt5Ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          mt5WsCallbacks.forEach(cb => cb(data))
+        } catch (e) {}
+      }
+      mt5Ws.onerror = (e) => {
+        console.log('[MT5 WS] Error, using fallback data')
+      }
+      mt5Ws.onclose = () => {
+        console.log('[MT5 WS] Disconnected')
+      }
+    } catch (e) {
+      console.log('[MT5 WS] Failed to connect')
+    }
+  }
+  
+  return mt5Ws
+}
 
 interface AssetItem {
   symbol: string
@@ -32,6 +71,7 @@ export default function TradingPage() {
   const chartApiRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
   
   const [range, setRange] = useState('1d')
   const [interval, setInterval] = useState('15m')
@@ -41,6 +81,10 @@ export default function TradingPage() {
   const [orderType, setOrderType] = useState<'buy' | 'sell'>('buy')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  // Tooltip state - usar ref para atualização instantânea
+  const [tooltipData, setTooltipData] = useState<{ time: number; open: number; high: number; low: number; close: number } | null>(null)
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
 
   const [depth, setDepth] = useState<L2Depth | null>(null)
   const [trades, setTrades] = useState<Trade[]>([])
@@ -73,6 +117,38 @@ export default function TradingPage() {
       const v = c === 'x' ? r : (r & 0x3) | 0x8
       return v.toString(16)
     })
+  }
+
+  // Gerar candles simulados consistentes baseados no preço atual
+  function generateSimulatedCandles(basePrice: number, rangeStr: string, intervalStr: string): Array<{ time: UTCTimestamp; open: number; high: number; low: number; close: number }> {
+    const now = Math.floor(Date.now() / 1000)
+    const intervalMinutes: Record<string, number> = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1h': 60, '1d': 1440 }
+    const rangeMinutes: Record<string, number> = { '1d': 1440, '5d': 7200, '1mo': 43200, '3mo': 129600 }
+    
+    const interval = intervalMinutes[intervalStr] || 15
+    const rangeTotal = rangeMinutes[rangeStr] || 1440
+    const candleCount = Math.min(Math.floor(rangeTotal / interval), 100)
+    
+    const candles: Array<{ time: UTCTimestamp; open: number; high: number; low: number; close: number }> = []
+    
+    // Usar hash do símbolo para variação consistente
+    const symbolHash = selectedAsset.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+    const volatility = basePrice * 0.02 // 2% de volatilidade
+    
+    for (let i = 0; i < candleCount; i++) {
+      const time = (now - (candleCount - i) * interval * 60) as UTCTimestamp
+      const seed = (symbolHash + i * 17) % 100 / 100
+      
+      const change = (seed - 0.5) * volatility
+      const open = i === 0 ? basePrice : candles[i - 1].close
+      const close = Math.max(0.01, open + change)
+      const high = Math.max(open, close) + Math.abs(change) * 0.3
+      const low = Math.min(open, close) - Math.abs(change) * 0.3
+      
+      candles.push({ time, open, high, low, close })
+    }
+    
+    return candles
   }
 
   // Initialize chart
@@ -123,6 +199,30 @@ export default function TradingPage() {
     chartApiRef.current = chart
     seriesRef.current = series
 
+    // Subscribe to crosshair move for tooltip
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time || !param.point) {
+        setTooltipData(null)
+        setTooltipPos(null)
+        return
+      }
+      const candleData = param.seriesData.get(series)
+      if (candleData && typeof candleData === 'object') {
+        const d = candleData as { open: number; high: number; low: number; close: number; time: UTCTimestamp }
+        setTooltipData({
+          time: d.time as number,
+          open: d.open,
+          high: d.high,
+          low: d.low,
+          close: d.close,
+        })
+        setTooltipPos({ x: param.point.x, y: param.point.y })
+      } else {
+        setTooltipData(null)
+        setTooltipPos(null)
+      }
+    })
+
     const handleResize = () => {
       if (chartRef.current) {
         chart.applyOptions({ 
@@ -146,6 +246,65 @@ export default function TradingPage() {
     }
   }, [])
 
+  // MT5 Real-time WebSocket connection
+  useEffect(() => {
+    const handleMt5Data = (data: any) => {
+      if (data.type === 'init') {
+        // Recebeu estado inicial
+        if (data.candles && data.candles[selectedAsset]) {
+          const candles = data.candles[selectedAsset].map((c: any) => ({
+            time: c.time as UTCTimestamp,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close
+          }))
+          if (candles.length > 0 && seriesRef.current) {
+            seriesRef.current.setData(candles)
+            // Atualizar cache
+            if (!candlesCache.has(selectedAsset)) {
+              candlesCache.set(selectedAsset, new Map())
+            }
+            candlesCache.get(selectedAsset)!.set(`${selectedAsset}:1d:1m`, candles)
+            setQuote(candles[candles.length - 1].close)
+          }
+        }
+        if (data.prices && data.prices[selectedAsset]) {
+          setQuote(data.prices[selectedAsset].bid || data.prices[selectedAsset].ask)
+        }
+      } else if (data.type === 'update') {
+        // Atualização em tempo real
+        const update = data.data?.[selectedAsset]
+        if (update) {
+          // Atualizar preço
+          if (update.tick) {
+            setQuote(update.tick.bid || update.tick.ask)
+          }
+          // Atualizar candle atual
+          if (update.candle && seriesRef.current) {
+            seriesRef.current.update({
+              time: update.candle.time as UTCTimestamp,
+              open: update.candle.open,
+              high: update.candle.high,
+              low: update.candle.low,
+              close: update.candle.close
+            })
+          }
+        }
+      }
+    }
+    
+    // Registrar callback
+    mt5WsCallbacks.add(handleMt5Data)
+    
+    // Conectar
+    getMt5Ws()
+    
+    return () => {
+      mt5WsCallbacks.delete(handleMt5Data)
+    }
+  }, [selectedAsset])
+
   // Load chart data
   useEffect(() => {
     void loadChartData()
@@ -154,37 +313,93 @@ export default function TradingPage() {
   async function loadChartData() {
     if (!seriesRef.current) return
     
+    const cacheKey = `${selectedAsset}:${range}:${interval}`
+    
+    // Verificar cache primeiro
+    if (candlesCache.has(selectedAsset)) {
+      const symbolCache = candlesCache.get(selectedAsset)!
+      if (symbolCache.has(cacheKey)) {
+        const cachedCandles = symbolCache.get(cacheKey)!
+        seriesRef.current.setData(cachedCandles)
+        if (cachedCandles.length > 0) {
+          setQuote(cachedCandles[cachedCandles.length - 1].close)
+        }
+        return
+      }
+    }
+    
     setLoading(true)
     setError(null)
     try {
-      let url = ''
-      if (selectedAsset === 'BTCBRL') {
-        url = `/api/v1/btc/history?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`
-      } else if (selectedAsset === 'USDB11' || selectedAsset.includes('USD')) {
-        url = `/api/v1/fx/history?currency=USD&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`
-      } else {
-        url = `/api/v1/stocks/${encodeURIComponent(selectedAsset)}/history+quote?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`
+      let candles: Array<{ time: UTCTimestamp; open: number; high: number; low: number; close: number }> = []
+      
+      // Primeiro tentar MT5 candles (forex)
+      const mt5Res = await apiGet<any>(`/api/v1/mt5/${encodeURIComponent(selectedAsset)}/candles`)
+      if (mt5Res?.candles && mt5Res.candles.length > 0) {
+        candles = mt5Res.candles.filter((c: any) => {
+          if (!c) return false
+          const t = Number(c.time)
+          if (!Number.isFinite(t) || t <= 0) return false
+          const o = Number(c.open)
+          const h = Number(c.high)
+          const l = Number(c.low)
+          const cl = Number(c.close)
+          return [o, h, l, cl].every((v) => Number.isFinite(v))
+        }).map((c: any) => ({
+          time: (Number(c.time) as UTCTimestamp),
+          open: Number(c.open) || 0,
+          high: Number(c.high) || 0,
+          low: Number(c.low) || 0,
+          close: Number(c.close) || 0,
+        }))
       }
       
-      const res = await apiGet<any>(url)
-      const data = res.data || res.candles || []
+      // Se não encontrou no MT5, buscar de outras fontes
+      let quoteRes: any = null
+      if (candles.length === 0) {
+        let url = ''
+        if (selectedAsset === 'BTCBRL') {
+          url = `/api/v1/btc/history?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`
+        } else if (selectedAsset === 'USDB11' || selectedAsset.includes('USD')) {
+          url = `/api/v1/fx/history?currency=USD&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`
+        } else {
+          url = `/api/v1/stocks/${encodeURIComponent(selectedAsset)}/history+quote?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`
+        }
+        
+        const res = await apiGet<any>(url)
+        quoteRes = res
+        const data = res.data || res.candles || []
+        
+        candles = data.filter((c: any) => {
+          if (!c) return false
+          const t = Number(c.time)
+          if (!Number.isFinite(t) || t <= 0) return false
+          const o = Number(c.open)
+          const h = Number(c.high)
+          const l = Number(c.low)
+          const cl = Number(c.close)
+          return [o, h, l, cl].every((v) => Number.isFinite(v))
+        }).map((c: any) => ({
+          time: (Number(c.time) as UTCTimestamp),
+          open: Number(c.open) || 0,
+          high: Number(c.high) || 0,
+          low: Number(c.low) || 0,
+          close: Number(c.close) || 0,
+        }))
+      }
       
-      const candles = data.filter((c: any) => {
-        if (!c) return false
-        const t = Number(c.time)
-        if (!Number.isFinite(t) || t <= 0) return false
-        const o = Number(c.open)
-        const h = Number(c.high)
-        const l = Number(c.low)
-        const cl = Number(c.close)
-        return [o, h, l, cl].every((v) => Number.isFinite(v))
-      }).map((c: any) => ({
-        time: (Number(c.time) as UTCTimestamp),
-        open: Number(c.open) || 0,
-        high: Number(c.high) || 0,
-        low: Number(c.low) || 0,
-        close: Number(c.close) || 0,
-      }))
+      // Se não há candles reais, gerar candles simulados consistentes baseados no preço atual
+      if (candles.length === 0 && quote && Number.isFinite(quote) && quote > 0) {
+        candles = generateSimulatedCandles(quote, range, interval)
+      }
+      
+      // Salvar no cache
+      if (candles.length > 0) {
+        if (!candlesCache.has(selectedAsset)) {
+          candlesCache.set(selectedAsset, new Map())
+        }
+        candlesCache.get(selectedAsset)!.set(cacheKey, candles)
+      }
       
       seriesRef.current.setData(candles)
       
@@ -194,8 +409,8 @@ export default function TradingPage() {
       }
 
       // Prefer real quote when available
-      if (!isBtc && !isFx && res?.quote && Number.isFinite(Number(res.quote.priceBRL))) {
-        setQuote(Number(res.quote.priceBRL))
+      if (!isBtc && !isFx && quoteRes?.quote && Number.isFinite(Number(quoteRes.quote.priceBRL))) {
+        setQuote(Number(quoteRes.quote.priceBRL))
       }
     } catch (err) {
       console.error('Failed to load chart data:', err)
@@ -468,8 +683,43 @@ export default function TradingPage() {
       </div>
 
       {/* Chart */}
-      <div className="chart-container">
+      <div className="chart-container" style={{ position: 'relative' }}>
         <div ref={chartRef} style={{ height: '100%', width: '100%' }} />
+        {tooltipData && tooltipPos && (
+          <div 
+            ref={tooltipRef}
+            className="chart-tooltip"
+            style={{
+              position: 'absolute',
+              left: `${Math.min(tooltipPos.x + 15, (chartRef.current?.clientWidth || 400) - 180)}px`,
+              top: `${Math.max(tooltipPos.y - 90, 10)}px`,
+              background: 'rgba(22, 27, 34, 0.95)',
+              border: '1px solid rgba(48, 54, 61, 0.8)',
+              borderRadius: '6px',
+              padding: '10px 14px',
+              fontSize: '12px',
+              color: '#e6edf3',
+              pointerEvents: 'none',
+              zIndex: 100,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              minWidth: '150px',
+            }}
+          >
+            <div style={{ marginBottom: '6px', fontWeight: 'bold', color: '#58a6ff', fontSize: '11px' }}>
+              {new Date(tooltipData.time * 1000).toLocaleString('pt-BR')}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '3px 16px', fontSize: '12px' }}>
+              <span style={{ color: '#8b949e' }}>Abertura:</span>
+              <span style={{ color: '#e6edf3' }}>R$ {tooltipData.open.toFixed(2)}</span>
+              <span style={{ color: '#8b949e' }}>Máxima:</span>
+              <span style={{ color: '#3fb950' }}>R$ {tooltipData.high.toFixed(2)}</span>
+              <span style={{ color: '#8b949e' }}>Mínima:</span>
+              <span style={{ color: '#f85149' }}>R$ {tooltipData.low.toFixed(2)}</span>
+              <span style={{ color: '#8b949e' }}>Fechamento:</span>
+              <span style={{ color: tooltipData.close >= tooltipData.open ? '#3fb950' : '#f85149', fontWeight: 'bold' }}>R$ {tooltipData.close.toFixed(2)}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {!isBtc && !isFx ? (

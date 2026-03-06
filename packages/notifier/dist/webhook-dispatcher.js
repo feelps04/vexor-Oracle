@@ -72,4 +72,3 @@ class WebhookDispatcher {
     }
 }
 exports.WebhookDispatcher = WebhookDispatcher;
-//# sourceMappingURL=webhook-dispatcher.js.map

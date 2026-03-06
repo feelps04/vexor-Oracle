@@ -23,4 +23,3 @@ async function isBankHolidayToday() {
         return false;
     }
 }
-//# sourceMappingURL=bank-holidays.js.map

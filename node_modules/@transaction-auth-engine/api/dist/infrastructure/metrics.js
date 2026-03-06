@@ -52,4 +52,3 @@ async function registerMetrics(app) {
         return reply.type('text/plain').send(metrics);
     });
 }
-//# sourceMappingURL=metrics.js.map

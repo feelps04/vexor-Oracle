@@ -2,6 +2,7 @@
 #include "metrics_server.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -104,6 +105,7 @@ static const char* kSbeTickTemplatesXml = R"XML(<?xml version="1.0" encoding="UT
 class B3SbeHandler final : public OnixS::FIX::SBE::IDecodeListener {
 public:
   explicit B3SbeHandler(BufferedPublisher& pub) : pub_(pub) {
+    source_ = getenvOr("FIX_WRAPPER_SOURCE", "b3-sbe");
   }
 
   void onBeginMessage(unsigned templateId, const char* messageType, size_t messageTypeLength) override {
@@ -131,10 +133,21 @@ public:
     if (price_mantissa_.has_value() && price_exponent_.has_value()) {
       payload << ",\"price_mantissa\":" << price_mantissa_.value();
       payload << ",\"price_exponent\":" << price_exponent_.value();
+
+      const double mant = static_cast<double>(price_mantissa_.value());
+      const int exp = price_exponent_.value();
+      const double px = mant * std::pow(10.0, static_cast<double>(exp));
+      if (std::isfinite(px)) {
+        payload << ",\"priceBRL\":" << px;
+      }
     }
 
     if (qty_.has_value()) {
       payload << ",\"qty\":" << qty_.value();
+    }
+
+    if (!source_.empty()) {
+      payload << ",\"source\":\"" << source_ << "\"";
     }
 
     payload << "}";
@@ -226,6 +239,8 @@ private:
   uint64_t seq_ = 0;
   unsigned template_id_ = 0;
   std::string message_type_;
+
+  std::string source_;
 
   std::string symbol_;
   std::optional<long long> price_mantissa_;

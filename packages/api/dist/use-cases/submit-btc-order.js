@@ -11,4 +11,3 @@ async function submitBtcOrder(producer, mercadoBitcoin, input) {
     await producer.sendTransaction(transaction);
     return transaction;
 }
-//# sourceMappingURL=submit-btc-order.js.map

@@ -1,0 +1,356 @@
+//+------------------------------------------------------------------+
+//|                        Sentinel_RAM_v520.mq5                     |
+//|                          Copyright 2024, Sentinel AI             |
+//|                    Ponte MT5 → Memória Compartilhada → Kafka     |
+//+------------------------------------------------------------------+
+#property copyright "Sentinel AI"
+#property link      ""
+#property version   "5.20"
+#property strict
+
+//+------------------------------------------------------------------+
+//| IMPORTS — DLL do Windows                                         |
+//+------------------------------------------------------------------+
+#import "kernel32.dll"
+   long   CreateFileMappingW(long hFile, long lpAttr, uint flProtect,
+                              uint dwMaxHigh, uint dwMaxLow, string lpName);
+   long   OpenFileMappingW(uint dwAccess, bool bInherit, string lpName);
+   long   MapViewOfFile(long hMap, uint dwAccess, uint dwOffHigh,
+                        uint dwOffLow, ulong dwBytes);
+   bool   UnmapViewOfFile(long lpBase);
+   bool   CloseHandle(long hObject);
+   void   RtlMoveMemory(long dest, uchar &src[], uint len);
+   void   RtlMoveMemory(uchar &dest[], long src, uint len);
+#import
+
+//+------------------------------------------------------------------+
+//| PARÂMETROS DE ENTRADA                                            |
+//+------------------------------------------------------------------+
+sinput group "=== Configurações Gerais ==="
+input int     InpTimerMs         = 50;              // Intervalo do timer (ms)
+input bool    InpAutoSelect      = true;            // Auto-adicionar TODOS os símbolos do servidor
+input int     InpSymsPerCycle    = 200;             // Símbolos processados por ciclo do timer
+
+sinput group "=== Memória Compartilhada ==="
+input string  InpMMFName         = "Local\\B3RAM";  // Nome da memória compartilhada
+input int     InpRecordBytes     = 128;             // Bytes por registro
+input int     InpRecordCount     = 8192;            // Quantidade de registros (slots)
+input int     InpFocusSlot       = 0;               // Slot reservado para símbolo em foco
+
+//+------------------------------------------------------------------+
+//| CONSTANTES — Layout de memória (offsets em bytes)               |
+//+------------------------------------------------------------------+
+#define BID_OFF     0
+#define ASK_OFF     8
+#define VOL_OFF     16
+#define TS_OFF      24
+#define ANO_OFF     32
+#define HB_OFF      36
+#define WF_OFF      40
+#define SYM_OFF     44
+#define SYM_BYTES   16
+
+//+------------------------------------------------------------------+
+//| VARIÁVEIS GLOBAIS                                                |
+//+------------------------------------------------------------------+
+long   hMap         = 0;
+long   pBase        = 0;
+int    hb_global    = 0;
+int    healthCheck  = 0;
+int    g_rotIdx     = 0;     // ponteiro de rotação pelos símbolos
+int    RECORD_BYTES;
+int    RECORD_COUNT;
+int    FOCUS_SLOT;
+string MMF_NAME;
+
+//+------------------------------------------------------------------+
+//| UNION — Serialização de double                                   |
+//+------------------------------------------------------------------+
+union DoubleSerializer { double d; uchar b[8]; };
+DoubleSerializer ds;
+
+//+------------------------------------------------------------------+
+//| BUFFERS AUXILIARES                                               |
+//+------------------------------------------------------------------+
+uchar b4[4];
+uchar b8[8];
+uchar bSym[16];
+
+//+------------------------------------------------------------------+
+//| WriteI32                                                         |
+//+------------------------------------------------------------------+
+void WriteI32(long base, int off, int v)
+{
+   b4[0] = (uchar)( v        & 0xFF);
+   b4[1] = (uchar)((v >>  8) & 0xFF);
+   b4[2] = (uchar)((v >> 16) & 0xFF);
+   b4[3] = (uchar)((v >> 24) & 0xFF);
+   RtlMoveMemory(base + off, b4, 4);
+}
+
+//+------------------------------------------------------------------+
+//| WriteI64                                                         |
+//+------------------------------------------------------------------+
+void WriteI64(long base, int off, long v)
+{
+   b8[0] = (uchar)( v        & 0xFF);
+   b8[1] = (uchar)((v >>  8) & 0xFF);
+   b8[2] = (uchar)((v >> 16) & 0xFF);
+   b8[3] = (uchar)((v >> 24) & 0xFF);
+   b8[4] = (uchar)((v >> 32) & 0xFF);
+   b8[5] = (uchar)((v >> 40) & 0xFF);
+   b8[6] = (uchar)((v >> 48) & 0xFF);
+   b8[7] = (uchar)((v >> 56) & 0xFF);
+   RtlMoveMemory(base + off, b8, 8);
+}
+
+//+------------------------------------------------------------------+
+//| WriteF64                                                         |
+//+------------------------------------------------------------------+
+void WriteF64(long base, int off, double v)
+{
+   ds.d = v;
+   RtlMoveMemory(base + off, ds.b, 8);
+}
+
+//+------------------------------------------------------------------+
+//| WriteSymbolAscii                                                 |
+//+------------------------------------------------------------------+
+void WriteSymbolAscii(long base, int off, string sym)
+{
+   ArrayInitialize(bSym, 0);
+   StringToCharArray(sym, bSym, 0, SYM_BYTES - 1, CP_ACP);
+   RtlMoveMemory(base + off, bSym, SYM_BYTES);
+}
+
+//+------------------------------------------------------------------+
+//| SlotForSymbol — Hash FNV-1a                                      |
+//+------------------------------------------------------------------+
+int SlotForSymbol(string sym)
+{
+   string s = sym;
+   StringToUpper(s);
+   uint h   = 2166136261;
+   int  len = StringLen(s);
+   for(int i = 0; i < len; i++)
+      h = (h ^ (uint)StringGetCharacter(s, i)) * 16777619;
+   return (int)((h % (uint)(RECORD_COUNT - 1)) + 1);
+}
+
+//+------------------------------------------------------------------+
+//| ProcessSymbol                                                    |
+//+------------------------------------------------------------------+
+void ProcessSymbol(string sym, long tsMs, bool isFocus = false)
+{
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   if(bid <= 0.0 && ask <= 0.0) return;
+
+   int  slot    = isFocus ? FOCUS_SLOT : SlotForSymbol(sym);
+   long recBase = pBase + (long)(slot * RECORD_BYTES);
+   long vol     = SymbolInfoInteger(sym, SYMBOL_VOLUME);
+
+   WriteI32(recBase, WF_OFF, 1);
+   WriteF64(recBase, BID_OFF, bid);
+   WriteF64(recBase, ASK_OFF, ask);
+   WriteI64(recBase, VOL_OFF, vol);
+   WriteI64(recBase, TS_OFF,  tsMs);
+   WriteI32(recBase, ANO_OFF, 0);
+   WriteI32(recBase, HB_OFF,  hb_global);
+   WriteSymbolAscii(recBase, SYM_OFF, sym);
+   WriteI32(recBase, WF_OFF, 0);
+}
+
+//+------------------------------------------------------------------+
+//| AutoSelectAllSymbols                                             |
+//|                                                                  |
+//| Varre TODOS os símbolos disponíveis no servidor da corretora     |
+//| (SymbolsTotal(false)) e os ativa no Market Watch.               |
+//| O usuário NÃO precisa fazer NADA manualmente no MT5.            |
+//+------------------------------------------------------------------+
+void AutoSelectAllSymbols()
+{
+   int total = SymbolsTotal(false);   // false = servidor completo da corretora
+   int added = 0;
+
+   for(int i = 0; i < total; i++)
+   {
+      string sym = SymbolName(i, false);
+      if(StringLen(sym) == 0) continue;
+      if(!SymbolInfoInteger(sym, SYMBOL_SELECT))
+      {
+         SymbolSelect(sym, true);
+         added++;
+      }
+   }
+
+   Print("AutoSelect concluído: ",
+         total, " símbolos no servidor | ",
+         added, " novos no Market Watch | ",
+         SymbolsTotal(true), " total no Market Watch agora.");
+}
+
+//+------------------------------------------------------------------+
+//| InitSharedMemory                                                 |
+//+------------------------------------------------------------------+
+bool InitSharedMemory()
+{
+   uint totalBytes = (uint)(RECORD_BYTES * RECORD_COUNT);
+
+   hMap = CreateFileMappingW(-1, 0, 0x04, 0, totalBytes, MMF_NAME);
+   if(hMap == 0)
+   {
+      Print("ERRO CreateFileMappingW: ", GetLastError());
+      return false;
+   }
+
+   pBase = MapViewOfFile(hMap, 0x0002, 0, 0, (ulong)totalBytes);
+   if(pBase == 0)
+   {
+      Print("ERRO MapViewOfFile: ", GetLastError());
+      CloseHandle(hMap);
+      hMap = 0;
+      return false;
+   }
+
+   for(int slot = 0; slot < RECORD_COUNT; slot++)
+      WriteI32(pBase + (long)(slot * RECORD_BYTES), WF_OFF, 0);
+
+   Print("RAM criada: ", MMF_NAME,
+         " | ", RECORD_COUNT, " slots x ", RECORD_BYTES,
+         " bytes = ", (RECORD_COUNT * RECORD_BYTES) / 1024, " KB");
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| ReleaseSharedMemory                                              |
+//+------------------------------------------------------------------+
+void ReleaseSharedMemory()
+{
+   if(pBase != 0) { UnmapViewOfFile(pBase); pBase = 0; }
+   if(hMap  != 0) { CloseHandle(hMap);      hMap  = 0; }
+}
+
+//+------------------------------------------------------------------+
+//| OnInit                                                           |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   RECORD_BYTES = InpRecordBytes;
+   RECORD_COUNT = InpRecordCount;
+   FOCUS_SLOT   = InpFocusSlot;
+   MMF_NAME     = InpMMFName;
+   g_rotIdx     = 0;
+
+   // AUTO-SELECT: busca todos os ativos do servidor sem intervenção manual
+   if(InpAutoSelect)
+      AutoSelectAllSymbols();
+
+   if(!InitSharedMemory())
+      return INIT_FAILED;
+
+   if(!EventSetMillisecondTimer(InpTimerMs))
+   {
+      Print("ERRO EventSetMillisecondTimer: ", GetLastError());
+      ReleaseSharedMemory();
+      return INIT_FAILED;
+   }
+
+   int mwTotal = SymbolsTotal(true);
+   double voltaMs = MathCeil((double)mwTotal / InpSymsPerCycle) * InpTimerMs;
+
+   Print("=== Sentinel RAM v5.20 INICIADO ===");
+   Print("Market Watch: ", mwTotal, " simbolos");
+   Print("Timer: ", InpTimerMs, "ms | Por ciclo: ", InpSymsPerCycle);
+   Print("Volta completa em: ~", (int)voltaMs, "ms (~",
+         DoubleToString(voltaMs / 1000.0, 2), "s)");
+   Print("RAM: ", MMF_NAME, " | Slots: ", RECORD_COUNT);
+
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| OnDeinit                                                         |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   ReleaseSharedMemory();
+   Print("Sentinel RAM encerrado. Razao: ", reason);
+}
+
+//+------------------------------------------------------------------+
+//| OnTick — Atualização imediata do símbolo em foco no slot 0      |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   hb_global++;
+   long tsMs = (long)TimeTradeServer() * 1000;
+   ProcessSymbol(Symbol(), tsMs, true);
+}
+
+//+------------------------------------------------------------------+
+//| OnTimer — Rotação contínua por TODOS os símbolos do Market Watch |
+//|                                                                  |
+//| Exemplo com 4.500 símbolos:                                      |
+//|   InpSymsPerCycle=200, timer=50ms → volta em ~1.125ms (~1,1s)   |
+//|   InpSymsPerCycle=500, timer=50ms → volta em ~450ms             |
+//|   InpSymsPerCycle=500, timer=25ms → volta em ~225ms             |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+   hb_global++;
+   long tsMs  = (long)TimeTradeServer() * 1000;
+   int  total = SymbolsTotal(true);
+   if(total == 0) return;
+
+   if(g_rotIdx >= total) g_rotIdx = 0;
+
+   // Símbolo em foco sempre atualizado
+   ProcessSymbol(Symbol(), tsMs, true);
+
+   // Lote deste ciclo
+   int processed = 0;
+   while(processed < InpSymsPerCycle && g_rotIdx < total)
+   {
+      string sym = SymbolName(g_rotIdx, true);
+      g_rotIdx++;
+      if(sym == Symbol()) continue;
+      ProcessSymbol(sym, tsMs, false);
+      processed++;
+   }
+
+   if(g_rotIdx >= total) g_rotIdx = 0;
+
+   // Log de saúde a cada 100 ciclos
+   healthCheck++;
+   if(healthCheck >= 100)
+   {
+      Print("HB: ",       hb_global,
+            " | MW: ",    total,
+            " | Ciclo: ", processed,
+            " | Volta: ~",
+            (int)MathCeil((double)total / InpSymsPerCycle) * InpTimerMs, "ms");
+      healthCheck = 0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| LAYOUT DA MEMÓRIA — referência para o Node.js producer           |
+//+------------------------------------------------------------------+
+//
+//  Local\B3RAM  —  8192 slots x 128 bytes = 1 MB
+//
+//  Offset | Bytes | Tipo   | Campo      | Node.js read
+//  -------|-------|--------|------------|------------------------------
+//  0      | 8     | double | bid        | buf.readDoubleLE(0)
+//  8      | 8     | double | ask        | buf.readDoubleLE(8)
+//  16     | 8     | int64  | volume     | buf.readBigInt64LE(16)
+//  24     | 8     | int64  | timestamp  | buf.readBigInt64LE(24)
+//  32     | 4     | int32  | anomaly    | buf.readInt32LE(32)
+//  36     | 4     | int32  | heartbeat  | buf.readInt32LE(36)
+//  40     | 4     | int32  | write_flag | buf.readInt32LE(40)  ← checar == 0
+//  44     | 16    | char[] | symbol     | buf.toString('ascii',44,60).replace(/\0/g,'')
+//  60     | 68    | —      | reservado  | —
+//
+//+------------------------------------------------------------------+

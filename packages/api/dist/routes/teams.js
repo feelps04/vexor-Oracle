@@ -58,4 +58,3 @@ async function teamsRoutes(app, opts) {
         return reply.send({ items: out });
     });
 }
-//# sourceMappingURL=teams.js.map

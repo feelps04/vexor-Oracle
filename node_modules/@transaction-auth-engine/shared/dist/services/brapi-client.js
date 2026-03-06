@@ -16,14 +16,13 @@ class BrapiClient {
      * Token optional for the 4 free test symbols.
      */
     async getQuote(symbol) {
-        const url = `${BRAPI_BASE}/quote/${encodeURIComponent(symbol)}`;
         const headers = {};
         if (this.config.token) {
             headers['Authorization'] = `Bearer ${this.config.token}`;
         }
-        const params = this.config.token ? {} : undefined;
         const tokenParam = this.config.token ? { token: this.config.token } : {};
-        try {
+        const fetchQuote = async (sym) => {
+            const url = `${BRAPI_BASE}/quote/${encodeURIComponent(sym)}`;
             const response = await axios_1.default.get(url, {
                 timeout: 10_000,
                 headers: Object.keys(headers).length ? headers : undefined,
@@ -32,19 +31,37 @@ class BrapiClient {
             const data = response.data;
             const results = data?.results;
             if (!Array.isArray(results) || results.length === 0) {
-                throw new Error(`Brapi: no quote for symbol ${symbol}`);
+                throw new Error(`Brapi: no quote for symbol ${sym}`);
             }
             const first = results[0];
             const price = first?.regularMarketPrice ?? first.price;
             if (price == null || !Number.isFinite(price) || price <= 0) {
-                throw new Error(`Brapi: invalid price for ${symbol}`);
+                throw new Error(`Brapi: invalid price for ${sym}`);
             }
             return {
                 priceBRL: Number(price),
-                symbol: first?.symbol ?? symbol,
+                symbol: first?.symbol ?? sym,
             };
+        };
+        try {
+            return await fetchQuote(symbol);
         }
         catch (error) {
+            if (axios_1.default.isAxiosError(error) &&
+                error.response?.status === 404 &&
+                symbol &&
+                !symbol.includes('.') &&
+                (symbol.toUpperCase().endsWith('3') ||
+                    symbol.toUpperCase().endsWith('4') ||
+                    symbol.toUpperCase().endsWith('11') ||
+                    /\d$/.test(symbol))) {
+                try {
+                    return await fetchQuote(`${symbol}.SA`);
+                }
+                catch {
+                    // fallthrough
+                }
+            }
             if (axios_1.default.isAxiosError(error) && error.response?.status === 401) {
                 throw new Error('Brapi: token inválido ou ausente. Obtenha em brapi.dev/dashboard');
             }
@@ -53,4 +70,3 @@ class BrapiClient {
     }
 }
 exports.BrapiClient = BrapiClient;
-//# sourceMappingURL=brapi-client.js.map

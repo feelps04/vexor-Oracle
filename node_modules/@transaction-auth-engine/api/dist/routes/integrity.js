@@ -73,4 +73,3 @@ async function integrityRoutes(app, opts) {
         });
     });
 }
-//# sourceMappingURL=integrity.js.map

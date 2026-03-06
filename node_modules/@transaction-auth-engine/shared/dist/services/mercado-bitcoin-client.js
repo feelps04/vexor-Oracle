@@ -100,4 +100,3 @@ class MercadoBitcoinClient {
     }
 }
 exports.MercadoBitcoinClient = MercadoBitcoinClient;
-//# sourceMappingURL=mercado-bitcoin-client.js.map
